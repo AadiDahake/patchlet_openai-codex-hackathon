@@ -24,9 +24,15 @@ For one escalation it:
    `~/.cache/patchlet/<repo>` keyed by the lockfile hash), then every gate the target's
    `package.json` defines, cheapest first: `npm run typecheck`, `npm test`, `npm run build`. On
    failure the gate output goes back to the editor for the affected file (up to 3 repairs), then a
-   fresh candidate is drafted (up to 2 candidates). A repair also gets the files the gate named that
+   fresh candidate is drafted (up to 3 candidates). A repair also gets the files the gate named that
    the plan does not touch, read from the clone: a failing test says what the code has to satisfy,
    and a stack trace alone does not carry the signature it is being called with.
+
+   The first draft of each file comes from the cheaper editor model. The first failed gate in a run
+   escalates the editor: every later repair and every fresh candidate in that run uses the strong
+   escalation model, and a `status` trace row records the switch and the gate that caused it. A run
+   whose gates pass the first time never calls the escalation model. Each drafting and repair row
+   names the model that wrote the file, in its title and in its `model` field.
 4. **Opens a draft pull request** on `patchlet/<issue>-<slug>` with one commit
    (`feat: <title>`, `Closes #<n>`; a deleted path goes into the tree with a null blob sha), through
    MCP `create_pull_request` with a REST fallback. The body names the request, the user's quote, the
@@ -56,8 +62,18 @@ Every step updates `escalation.status` and writes `trace_event` rows (source `wo
 PostgREST, so the console's Activity page shows the run live. A heartbeat writes a `status` trace
 event ("worker online") per project every 60 s.
 
-The model ids the worker uses live in `steps/llm.py` and nowhere else. `docs/contracts.md`
-section 5 records each choice and why.
+The model ids the worker uses live in `steps/llm.py` and nowhere else:
+
+| Constant | Model | Calls |
+|---|---|---|
+| `ARCHITECT_MODEL` | `gpt-6.2-sol` | priority, issue text, the issue filing function call, the change plan |
+| `EDITOR_MODEL` | `gpt-6.1-terra` | the first draft of each file |
+| `ESCALATION_MODEL` | `gpt-6.2-sol` | every repair and every later candidate after the first failed gate |
+
+`docs/contracts.md` section 5 records each choice and why. Every model call logs one INFO line on
+the `patchlet.llm` logger with the model id and the token counts the API reports, for example
+`model call model=gpt-6.1-terra input=1534 cached_input=0 output=363 reasoning=140`. Prompts and
+keys are never logged. Add these lines up to see what a run cost.
 
 ## Layout
 
@@ -121,7 +137,8 @@ vault-exec uv run pytest -s tests/test_codegen_e2e.py  # real model calls agains
 ```
 
 The end-to-end test drafts a dark-mode change in `tests/fixtures/mini-next-app` and asserts that
-`npm run typecheck` and `npm run build` pass. It is skipped when `OPENAI_API_KEY` is unset. The
+`npm run typecheck` and `npm run build` pass. With `-s` it prints the model that wrote each file,
+whether the run escalated, and the token usage for each model. It is skipped when `OPENAI_API_KEY` is unset. The
 first run installs the fixture's dependencies (about a minute); later runs reuse the cache.
 
 ## Troubleshooting
@@ -133,7 +150,9 @@ first run installs the fixture's dependencies (about a minute); later runs reuse
 - **`npm ci failed`** - the cache under `~/.cache/patchlet/<repo>` is keyed by the lockfile hash;
   delete that directory to force a clean install. The gates need network access on the first run.
 - **A gate fails in the repair loop** - the trace shows the gate output and every repair. The run
-  gives up after 2 candidates with 3 repairs each and marks the escalation `failed`.
+  gives up after 3 candidates with 3 repairs each and marks the escalation `failed`. Every call
+  after the first failed gate runs on the escalation model, so a run that fails costs more than one
+  that passes first time.
 - **`npm test` runs against the target repository, not this one.** It is a gate because typecheck
   and build are not enough: a draft passed both and still broke NovaAir's own contract test, having
   added the documented exports with a signature the test does not call. `e2e` is never a gate, as it

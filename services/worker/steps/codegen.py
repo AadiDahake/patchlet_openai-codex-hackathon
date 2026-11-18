@@ -357,8 +357,14 @@ def draft_file(
     agents_md: str,
     context: dict[str, str],
     dependencies: str = "",
+    *,
+    model: str,
 ) -> str:
-    """Ask the editor for the whole new contents of one file."""
+    """Ask the editor for the whole new contents of one file.
+
+    `model` is chosen by the drafting loop: the editor model for a run's first draft, the escalation
+    model once a gate in the run has failed.
+    """
     parts = [_issue_block(req, issue_title, issue_body), "# Repository conventions (AGENTS.md)\n\n" + agents_md.strip()]
     if dependencies:
         parts.append("# " + dependencies)
@@ -371,7 +377,7 @@ def draft_file(
     else:
         parts.append(f"# Task\n\nRewrite `{target.path}`. Purpose: {target.reason}\n\nCurrent contents of `{target.path}`:\n{existing}")
     parts.append("Return only the complete file contents, no code fences, no commentary.")
-    return strip_fences(llm.complete(llm.EDITOR_MODEL, EDITOR_SYSTEM, "\n\n".join(parts)))
+    return strip_fences(llm.complete(model, EDITOR_SYSTEM, "\n\n".join(parts)))
 
 
 def repair_file(
@@ -382,8 +388,12 @@ def repair_file(
     context: dict[str, str],
     dependencies: str = "",
     own_new_tests: list[str] | None = None,
+    *,
+    model: str,
 ) -> str:
     """Feed a failing gate back to the editor for one file.
+
+    A repair only ever follows a failed gate, so the drafting loop passes the escalation model.
 
     `own_new_tests` names the test files this change itself added that the gate is failing on. They
     are not a requirement the repository set: they are part of the change under review, so the
@@ -411,4 +421,4 @@ def repair_file(
             "into one that asserts nothing."
         )
     parts.append("Return only the complete file contents, no code fences, no commentary.")
-    return strip_fences(llm.complete(llm.EDITOR_MODEL, EDITOR_SYSTEM, "\n\n".join(parts)))
+    return strip_fences(llm.complete(model, EDITOR_SYSTEM, "\n\n".join(parts)))
