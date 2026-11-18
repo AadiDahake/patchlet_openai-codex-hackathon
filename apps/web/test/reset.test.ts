@@ -1,11 +1,12 @@
 /**
  * Reset puts the demo back to its starting position: the rows, the known routes, the worker's
- * issues and pull requests, and the demo site's code.
+ * issues and pull requests, the demo site's code, and what the product map learned from it.
  *
  * A route the agent remembered answers a question from the last run's product map before a single
  * check runs, so a reset that leaves them behind pins yesterday's answer to today's demo. A change
  * a demo run merged stays on the site unless `main` goes back to the baseline and Vercel serves
  * that commit again, and the console's button does that under the rules in `lib/demo/reset.ts`.
+ * The agent keeps pointing at the removed controls until the product map forgets them too.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { checkSiteReset, resetDemo, type ResetOptions } from "@/lib/demo/reset";
@@ -25,18 +26,33 @@ type World = {
   /** What an annotated tag object points at. */
   tagObject?: { sha: string; type: string };
   compare: { ahead_by: number; behind_by: number };
+  /** The commits the comparison lists, with the committer dates the cutoff is read from. */
+  commits: Array<{ sha: string; commit: { committer: { date?: string } } }>;
   /** Status GitHub answers the forced update of main with. */
   updateStatus: number;
   vercelProject: Record<string, unknown>;
   /** Status Vercel answers the new deployment with. */
   deployStatus: number;
+  /** Status PostgREST answers a product map table with. */
+  mapStatus: number;
 };
+
+/** Rows each table holds for the fake, so every count in a summary can be told apart. */
+const ROWS: Record<string, number> = { transition: 4, affordance: 11, site_page: 1 };
+const EARLIEST = "2026-11-18T08:40:00.000Z";
+const MAP_TABLES = ["transition", "affordance", "site_page"];
 
 function world(overrides: Partial<World> = {}): World {
   return {
     mainSha: MAIN,
     tag: { sha: BASELINE, type: "commit" },
     compare: { ahead_by: 3, behind_by: 0 },
+    // Out of date order on purpose: the cutoff is the earliest date, not the first commit listed.
+    commits: [
+      { sha: "c2", commit: { committer: { date: "2026-11-18T08:52:10Z" } } },
+      { sha: "c1", commit: { committer: { date: "2026-11-18T08:40:00Z" } } },
+      { sha: "c3", commit: { committer: { date: "2026-11-18T08:56:30Z" } } },
+    ],
     updateStatus: 200,
     vercelProject: {
       id: "prj_1",
@@ -54,6 +70,7 @@ function world(overrides: Partial<World> = {}): World {
       },
     },
     deployStatus: 200,
+    mapStatus: 204,
     ...overrides,
   };
 }
@@ -76,7 +93,7 @@ function fakeFetch(state: World, calls: Call[]): typeof fetch {
         return state.tag ? json({ object: state.tag }) : json({ message: "Not Found" }, 404);
       }
       if (path.startsWith(`/repos/${REPO}/git/tags/`)) return json({ object: state.tagObject });
-      if (path.startsWith(`/repos/${REPO}/compare/`)) return json(state.compare);
+      if (path.startsWith(`/repos/${REPO}/compare/`)) return json({ ...state.compare, commits: state.commits });
       if (path === `/repos/${REPO}/git/refs/heads/main` && method === "PATCH") {
         if (state.updateStatus !== 200) {
           return json({ message: "Cannot force-update a protected branch." }, state.updateStatus);
@@ -104,7 +121,12 @@ function fakeFetch(state: World, calls: Call[]): typeof fetch {
       return json({ error: { message: "unexpected" } }, 500);
     }
 
-    return new Response(null, { status: 204, headers: { "content-range": "*/1" } });
+    const table = new URL(url).pathname.replace("/rest/v1/", "");
+    if (MAP_TABLES.includes(table) && state.mapStatus !== 204) {
+      return new Response("permission denied", { status: state.mapStatus });
+    }
+    const status = method === "GET" ? 206 : 204;
+    return new Response(null, { status, headers: { "content-range": `*/${ROWS[table] ?? 1}` } });
   }) as unknown as typeof fetch;
 }
 
@@ -136,7 +158,10 @@ const writes = (calls: Call[]) =>
   calls.filter((call) => call.method !== "GET" && !call.url.startsWith("https://example.supabase.co"));
 const mainUpdates = (calls: Call[]) => calls.filter((call) => call.method === "PATCH" && call.url.endsWith("/git/refs/heads/main"));
 const deployments = (calls: Call[]) => calls.filter((call) => call.method === "POST" && call.url.includes("/v13/deployments"));
-const databaseDeletes = (calls: Call[]) => calls.filter((call) => call.method === "DELETE");
+const mapCalls = (calls: Call[]) =>
+  calls.filter((call) => MAP_TABLES.some((table) => call.url.startsWith(`https://example.supabase.co/rest/v1/${table}?`)));
+const databaseDeletes = (calls: Call[]) =>
+  calls.filter((call) => call.method === "DELETE" && !mapCalls([call]).length);
 
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -223,6 +248,7 @@ describe("resetDemo: main and the demo site", () => {
       "acme/novaair has no demo-baseline tag, so main stays where it is. Tag the commit the demo starts from as demo-baseline so a reset can put the site back.",
     );
     expect(databaseDeletes(calls)).toHaveLength(5);
+    expect(mapCalls(calls)).toEqual([]);
   });
 
   it("creates the missing tag at main when the script asks, and does not move main", async () => {
@@ -246,6 +272,7 @@ describe("resetDemo: main and the demo site", () => {
     expect(summary.main.outcome).toBe("at-baseline");
     expect(summary.site.outcome).toBe("serving");
     expect(writes(calls)).toEqual([]);
+    expect(mapCalls(calls)).toEqual([]);
     expect(summary.problems).toEqual([]);
   });
 
@@ -279,6 +306,7 @@ describe("resetDemo: main and the demo site", () => {
     expect(summary.main.outcome).toBe("not-ancestor");
     expect(mainUpdates(calls)).toEqual([]);
     expect(deployments(calls)).toEqual([]);
+    expect(mapCalls(calls)).toEqual([]);
     expect(summary.problems).toContain(
       "The demo-baseline commit (bbbbbbb) is not in the history of main (mmmmmmm), so main stays where it is. Move the tag to a commit on main, or put main back by hand.",
     );
@@ -295,6 +323,8 @@ describe("resetDemo: main and the demo site", () => {
     expect(summary.problems).toContain(summary.main.problem);
     expect(summary.site.outcome).toBe("skipped");
     expect(deployments(calls)).toEqual([]);
+    expect(mapCalls(calls)).toEqual([]);
+    expect(summary.productMap.since).toBeNull();
     expect(databaseDeletes(calls)).toHaveLength(5);
   });
 
@@ -313,6 +343,8 @@ describe("resetDemo: main and the demo site", () => {
     expect(calls.every((call) => call.method === "GET")).toBe(true);
     expect(summary.main).toMatchObject({ outcome: "reset", commitsSinceBaseline: 3 });
     expect(summary.site).toMatchObject({ outcome: "deploying", deployment: null });
+    expect(summary.productMap).toEqual({ since: EARLIEST, controls: 11, pages: 1, transitions: 4, problem: null });
+    expect(mapCalls(calls)).toHaveLength(3);
     expect(summary.knownRoutes).toBe(1);
   });
 
@@ -323,6 +355,55 @@ describe("resetDemo: main and the demo site", () => {
     expect(summary.main.outcome).toBe("left");
     expect(summary.site.outcome).toBe("skipped");
     expect(calls.some((call) => call.url.includes("/git/ref/") || call.url.includes("vercel.com"))).toBe(false);
+    expect(mapCalls(calls)).toEqual([]);
+  });
+});
+
+describe("resetDemo: the product map", () => {
+  it("forgets every page, control and move first recorded after the earliest removed commit", async () => {
+    const { calls, summary: pending } = run(world());
+    const summary = await pending;
+
+    const forgotten = mapCalls(calls).map((call) => `${call.method} ${call.url.replace("https://example.supabase.co/rest/v1/", "")}`);
+    const since = encodeURIComponent(EARLIEST);
+    expect(forgotten).toEqual([
+      `DELETE transition?project_id=eq.project-1&first_seen=gt.${since}`,
+      `DELETE affordance?project_id=eq.project-1&first_seen=gt.${since}`,
+      `DELETE site_page?project_id=eq.project-1&first_seen=gt.${since}`,
+    ]);
+    expect(summary.main.removedSince).toBe(EARLIEST);
+    expect(summary.productMap).toEqual({ since: EARLIEST, controls: 11, pages: 1, transitions: 4, problem: null });
+    expect(summary.problems).toEqual([]);
+  });
+
+  it("leaves the map alone when main is already at the baseline", async () => {
+    const { calls, summary: pending } = run(world({ mainSha: BASELINE }));
+    const summary = await pending;
+
+    expect(summary.main.outcome).toBe("at-baseline");
+    expect(mapCalls(calls)).toEqual([]);
+    expect(summary.productMap.since).toBeNull();
+  });
+
+  it("names the problem and finishes the reset when the map cannot be cleared", async () => {
+    const { calls, summary: pending } = run(world({ mapStatus: 401 }));
+    const summary = await pending;
+
+    expect(summary.main.outcome).toBe("reset");
+    expect(summary.productMap.problem).toBe(
+      "The product map could not forget the controls of the removed changes (transition answered 401: permission denied). The agent may still point visitors at controls the site no longer has.",
+    );
+    expect(summary.problems).toContain(summary.productMap.problem);
+    expect(databaseDeletes(calls)).toHaveLength(5);
+  });
+
+  it("keeps the map and says so when GitHub does not date the removed commits", async () => {
+    const { calls, summary: pending } = run(world({ commits: [] }));
+    const summary = await pending;
+
+    expect(summary.main.outcome).toBe("reset");
+    expect(mapCalls(calls)).toEqual([]);
+    expect(summary.productMap.problem).toContain("GitHub did not date the removed commits");
   });
 });
 
@@ -379,15 +460,11 @@ describe("checkSiteReset", () => {
     const calls: Call[] = [];
     vi.stubGlobal("fetch", fakeFetch(world(), calls));
 
-    const preview = await checkSiteReset({
-      repo: REPO,
-      githubToken: "github-token",
-      vercelToken: "vercel-token",
-      vercelProject: "novaair",
-    });
+    const preview = await checkSiteReset(CONSOLE);
 
     expect(preview.main).toMatchObject({ outcome: "reset", commitsSinceBaseline: 3 });
     expect(preview.site.outcome).toBe("deploying");
+    expect(preview.productMap.controls).toBe(11);
     expect(calls.every((call) => call.method === "GET")).toBe(true);
   });
 
@@ -395,7 +472,7 @@ describe("checkSiteReset", () => {
     const calls: Call[] = [];
     vi.stubGlobal("fetch", fakeFetch(world({ tag: null }), calls));
 
-    const preview = await checkSiteReset({ repo: REPO, githubToken: "t", vercelToken: "v", vercelProject: "novaair" });
+    const preview = await checkSiteReset(CONSOLE);
 
     expect(preview.main.outcome).toBe("no-baseline");
     expect(calls.every((call) => call.method === "GET")).toBe(true);

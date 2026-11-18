@@ -198,15 +198,18 @@ the winner's number and comments on that issue. Section 4 of `docs/contracts.md`
 
 The console's Reset demo and `npm run demo:reset` are one implementation,
 `apps/web/lib/demo/reset.ts`. Besides clearing the activity, both force `main` of the bound
-repository back to its `demo-baseline` tag and start a Vercel production deployment of that commit,
-because Vercel skips a commit it has built before and a merged demo change otherwise stays live.
-Aadi asked for the button to do this on 2026-11-18; before that only the script moved `main`. A
-forced update from a browser keeps four rules, and anything added to the reset keeps them too: it
-acts only on the caller's own project and bound repository; it needs the tag and the console never
-creates it; it moves `main` only when the baseline is an ancestor of `main`; and a refusal from
-GitHub or Vercel is named in the summary while the rest of the reset completes. It deploys rather
-than promotes: promoting an old production deployment is an Instant Rollback, which stops every
-later merge from going live. `docs/demo.md` has the run this comes from.
+repository back to its `demo-baseline` tag, start a Vercel production deployment of that commit
+(Vercel skips a commit it has built before, so a merged demo change otherwise stays live), and make
+the product map forget every page, control and move it first recorded after the earliest removed
+commit (otherwise the agent keeps pointing visitors at the removed controls). Aadi asked for the
+button to do this on 2026-11-18; before that only the script moved `main`. A forced update from a
+browser keeps four rules, and anything added to the reset keeps them too: it acts only on the
+caller's own project and bound repository; it needs the tag and the console never creates it; it
+moves `main` only when the baseline is an ancestor of `main`, and touches the site and the map only
+after `main` moved; and a refusal from GitHub, Vercel or the database is named in the summary while
+the rest of the reset completes. It deploys rather than promotes: promoting an old production
+deployment is an Instant Rollback, which stops every later merge from going live. `docs/demo.md` has
+the runs this comes from.
 
 ## A blip on the wire is not a verdict on the request
 

@@ -4,11 +4,12 @@
  */
 import { describe, expect, it } from "vitest";
 import { describeReset, describeSitePreview } from "@/lib/demo/describe";
-import type { MainSummary, ResetSummary, SiteSummary } from "@/lib/demo/reset";
+import type { MainSummary, ProductMapSummary, ResetSummary, SiteSummary } from "@/lib/demo/reset";
 
 const MAIN_RESET: MainSummary = {
   outcome: "reset",
   commitsSinceBaseline: 3,
+  removedSince: "2026-11-18T08:40:00.000Z",
   baselineSha: "b".repeat(40),
   mainSha: "m".repeat(40),
   problem: null,
@@ -21,6 +22,14 @@ const DEPLOYING: SiteSummary = {
   problem: null,
 };
 
+const FORGOTTEN: ProductMapSummary = {
+  since: "2026-11-18T08:40:00.000Z",
+  controls: 11,
+  pages: 1,
+  transitions: 4,
+  problem: null,
+};
+
 function summary(overrides: Partial<ResetSummary> = {}): ResetSummary {
   return {
     dryRun: false,
@@ -30,6 +39,7 @@ function summary(overrides: Partial<ResetSummary> = {}): ResetSummary {
     branchesDeleted: 1,
     main: MAIN_RESET,
     site: DEPLOYING,
+    productMap: FORGOTTEN,
     traceEvents: 9,
     escalations: 1,
     requestGroups: 1,

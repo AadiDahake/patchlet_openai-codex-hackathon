@@ -37,7 +37,9 @@ The console's Reset demo (account menu) and `npm run demo:reset` share one imple
    a demo run merged (the confirmation says how many commits that is before you agree);
 3. starts a Vercel production deployment of the baseline commit, and does not wait for it: the
    result says the site is redeploying and links the deployment;
-4. clears the project's conversations, request groups, escalations, known routes and trace. The
+4. makes the product map forget the controls the removed changes added (see below), only when
+   `main` moved;
+5. clears the project's conversations, request groups, escalations, known routes and trace. The
    knowledge base is left alone.
 
 Until 2026-11-18 only the script moved `main`, because a forced update did not seem a job for a
@@ -69,5 +71,28 @@ deployment is an Instant Rollback to Vercel, and after one Vercel stops assignin
 domains to new deployments, so the next demo run's merge would build and never go live. A build
 takes about a minute; an Instant Rollback would be instant and would break the next run.
 
+### The product map forgets the removed controls
+
+The code and the site were not enough. In the same live run, after the site was back at the
+baseline, the agent still answered "Can you find us three seats together?" with "The 'Find seats
+together' capability is on the Choose Seats page". While the merged changes were live, the widget
+had recorded their controls in the product map: a "Light mode" combobox on four pages and a "Find
+seats together" button on `/trips/:id/seats`, among others. Firstmate deleted the 11 controls first
+seen after the first merged change went live, and the agent answered correctly again.
+
+So when the reset moves `main` back, it deletes every `transition`, `affordance` and `site_page` row
+of the project whose `first_seen` is later than the earliest committer date among the removed
+commits. The rule holds because a change cannot go live, and the widget cannot see its controls,
+before its own commit exists. In that run the removed commits were c145710 (light mode, committed
+08:41:13 UTC) and f9d18d3 (seats together, 08:56:41 UTC), so the cutoff is 08:41:13, three seconds
+before Vercel started the light mode deployment. The rule also deletes real controls first seen
+after the cutoff; the widget records them again on the next visit, so that costs nothing. When
+`main` does not move (already at the baseline, no tag, a refusal), the map is left alone.
+
+One gap stays: until the new deployment is live, about a minute, production still serves the
+removed changes, and a question asked through the widget in that minute records their controls
+again. Wait for the site to come back before you ask anything.
+
 `npm run demo:reset -- --dry-run` prints what a reset would do, including the commit it would
-deploy, and changes nothing. `--skip-main` leaves `main`, the tag and the site alone.
+deploy and how many controls the product map would forget, and changes nothing. `--skip-main`
+leaves `main`, the tag, the site and the product map alone.

@@ -31,6 +31,15 @@
  * the old one: promoting an earlier production deployment is an Instant Rollback to Vercel, which
  * turns off the automatic domain assignment, and the next demo run's merge would never go live.
  * The reset does not wait for the build; it says the site is redeploying and names the deployment.
+ *
+ * The agent has to forget the removed changes too. While they were live, the widget recorded their
+ * controls in the product map (`site_page`, `affordance`, `transition`), and on 2026-11-18 the agent
+ * still pointed a visitor at "Find seats together" after the site was back at the baseline. So when
+ * `main` moves back, the reset also forgets every page, control and move the map first recorded
+ * after the earliest commit it removes: no removed change can have gone live, or been seen by the
+ * widget, before its own commit existed. Real controls first seen in that window go too, and the
+ * widget records them again on the next visit, which costs nothing. When `main` does not move, the
+ * map is left alone.
  */
 
 /**
@@ -64,6 +73,8 @@ export type MainSummary = {
   outcome: MainOutcome;
   /** Commits on `main` after the baseline when it was read: the commits a reset takes away. */
   commitsSinceBaseline: number;
+  /** The earliest commit date among those commits, which bounds what the product map forgets. */
+  removedSince: string | null;
   baselineSha: string | null;
   mainSha: string | null;
   /** Why `main` did not reach the baseline, in words a person can act on. */
@@ -98,7 +109,23 @@ export type SiteSummary = {
   problem: string | null;
 };
 
-/** What the site half of a reset needs: where the code lives and where it is served from. */
+/**
+ * What the product map forgot once `main` moved back: the pages, controls and moves it first
+ * recorded after `since`. `since` is null when the map was left alone.
+ */
+export type ProductMapSummary = {
+  since: string | null;
+  controls: number;
+  pages: number;
+  transitions: number;
+  /** Why the map still holds controls from the removed changes, in words a person can act on. */
+  problem: string | null;
+};
+
+/**
+ * What the site half of a reset needs: where the code lives, where it is served from, and where
+ * the product map the agent plans over is kept.
+ */
 export type SiteResetOptions = {
   /** `owner/name` of the repository the worker files against. Skipped when null. */
   repo: string | null;
@@ -106,18 +133,21 @@ export type SiteResetOptions = {
   vercelToken: string | null;
   /** The Vercel project that serves the demo site from the repository's `main`. */
   vercelProject: string | null;
+  supabaseUrl: string | null;
+  supabaseKey: string | null;
+  /** Only this project's rows are cleared or forgotten. */
+  projectId: string;
 };
 
 export type ResetOptions = SiteResetOptions & {
-  /** What happens to the repository's `main` branch and the site it deploys. */
+  /** What happens to the repository's `main` branch, the site it deploys and the product map. */
   main: MainMode;
-  supabaseUrl: string | null;
-  supabaseKey: string | null;
-  /** Only this project's conversations, requests, escalations, known routes and trace events are cleared. */
-  projectId: string;
   /** Report what would happen and change nothing. */
   dryRun?: boolean;
 };
+
+/** What `main`, the demo site and the product map would go through, or went through. */
+export type SiteReset = { main: MainSummary; site: SiteSummary; productMap: ProductMapSummary };
 
 export type ResetSummary = {
   dryRun: boolean;
@@ -127,6 +157,7 @@ export type ResetSummary = {
   branchesDeleted: number;
   main: MainSummary;
   site: SiteSummary;
+  productMap: ProductMapSummary;
   traceEvents: number;
   escalations: number;
   requestGroups: number;
@@ -302,24 +333,32 @@ async function baselineCommit(token: string, repo: string): Promise<string | nul
   return target.sha;
 }
 
-/** Commits only `head` has (ahead) and commits only `base` has (behind). */
+/**
+ * Commits only `head` has (ahead), commits only `base` has (behind), and the earliest commit date
+ * among the ones `head` has. GitHub lists a comparison oldest first, so the first page of 100
+ * holds the earliest commit however long the comparison is.
+ */
 async function distance(
   token: string,
   repo: string,
   base: string,
   head: string,
-): Promise<{ ahead: number; behind: number }> {
-  const answer = asRecord(await github(token, "GET", `/repos/${repo}/compare/${base}...${head}?per_page=1`));
+): Promise<{ ahead: number; behind: number; earliest: string | null }> {
+  const answer = asRecord(await github(token, "GET", `/repos/${repo}/compare/${base}...${head}?per_page=100`));
   const ahead = answer?.ahead_by;
   const behind = answer?.behind_by;
   if (typeof ahead !== "number" || typeof behind !== "number") {
     throw new Error(`GitHub did not compare ${short(base)} with ${short(head)}`);
   }
-  return { ahead, behind };
+  const times = asArray(answer?.commits)
+    .map((commit) => Date.parse(text(asRecord(asRecord(commit.commit)?.committer)?.date) ?? ""))
+    .filter((time) => Number.isFinite(time));
+  const earliest = times.length > 0 ? new Date(Math.min(...times)).toISOString() : null;
+  return { ahead, behind, earliest };
 }
 
 function mainSummary(outcome: MainOutcome, problem: string | null = null): MainSummary {
-  return { outcome, commitsSinceBaseline: 0, baselineSha: null, mainSha: null, problem };
+  return { outcome, commitsSinceBaseline: 0, removedSince: null, baselineSha: null, mainSha: null, problem };
 }
 
 /** Moves `main` back to the baseline tag when the rules in the header allow it. */
@@ -365,7 +404,7 @@ async function resetMain(
   summary.baselineSha = baseline;
   if (baseline === head) return { ...summary, outcome: "at-baseline" };
 
-  let gap: { ahead: number; behind: number };
+  let gap: { ahead: number; behind: number; earliest: string | null };
   try {
     gap = await distance(token, repo, baseline, head);
   } catch (error) {
@@ -382,6 +421,7 @@ async function resetMain(
     };
   }
   summary.commitsSinceBaseline = gap.ahead;
+  summary.removedSince = gap.earliest;
   if (dryRun) return { ...summary, outcome: "reset" };
 
   // The REST API has no compare-and-swap for a ref. A commit merged in the instant between the
@@ -545,28 +585,64 @@ function githubUnavailable(repo: string | null, githubToken: string | null): str
   return null;
 }
 
-async function resetSite(
-  options: SiteResetOptions,
-  mode: MainMode,
-  dryRun: boolean,
-): Promise<{ main: MainSummary; site: SiteSummary }> {
-  const skipped = siteSummary("skipped", options.vercelProject);
-  if (mode === "leave") return { main: mainSummary("left"), site: skipped };
-  const { repo, githubToken } = options;
-  if (!repo || !githubToken) return { main: mainSummary("left", githubUnavailable(repo, githubToken)), site: skipped };
-
-  const main = await resetMain(githubToken, repo, mode, dryRun);
-  const atBaseline = main.outcome === "reset" || main.outcome === "at-baseline" || main.outcome === "baseline-created";
-  if (!atBaseline || !main.baselineSha) return { main, site: skipped };
-  const site = await deploySite(options.vercelToken, options.vercelProject, repo, main.baselineSha, dryRun);
-  return { main, site };
+function mapSummary(since: string | null, problem: string | null = null): ProductMapSummary {
+  return { since, controls: 0, pages: 0, transitions: 0, problem };
 }
 
 /**
- * What a reset would do to `main` and the demo site, changing nothing. The console shows it in the
- * confirmation, so the person knows how many commits go before they agree.
+ * Forgets what the product map first recorded after the earliest removed commit, once `main` has
+ * moved back past it (see the header). Moves go first, then controls, then pages, each counted on
+ * its own: deleting a page or a control first would take its moves and controls with it, uncounted.
  */
-export function checkSiteReset(options: SiteResetOptions): Promise<{ main: MainSummary; site: SiteSummary }> {
+async function forgetRemovedControls(
+  options: SiteResetOptions,
+  main: MainSummary,
+  dryRun: boolean,
+): Promise<ProductMapSummary> {
+  const { supabaseUrl, supabaseKey, projectId } = options;
+  // A database that is not configured is already named among the problems by the caller.
+  if (main.outcome !== "reset" || !supabaseUrl || !supabaseKey) return mapSummary(null);
+  const stale = "The agent may still point visitors at controls the site no longer has.";
+  if (!main.removedSince) {
+    return mapSummary(null, `GitHub did not date the removed commits, so the product map keeps their controls. ${stale}`);
+  }
+
+  const summary = mapSummary(main.removedSince);
+  const filter = `project_id=eq.${projectId}&first_seen=gt.${encodeURIComponent(main.removedSince)}`;
+  try {
+    summary.transitions = await clearTable(supabaseUrl, supabaseKey, "transition", filter, dryRun);
+    summary.controls = await clearTable(supabaseUrl, supabaseKey, "affordance", filter, dryRun);
+    summary.pages = await clearTable(supabaseUrl, supabaseKey, "site_page", filter, dryRun);
+  } catch (error) {
+    summary.problem = `The product map could not forget the controls of the removed changes (${reason(error)}). ${stale}`;
+  }
+  return summary;
+}
+
+async function resetSite(options: SiteResetOptions, mode: MainMode, dryRun: boolean): Promise<SiteReset> {
+  const skipped = siteSummary("skipped", options.vercelProject);
+  const untouched = mapSummary(null);
+  if (mode === "leave") return { main: mainSummary("left"), site: skipped, productMap: untouched };
+  const { repo, githubToken } = options;
+  if (!repo || !githubToken) {
+    return { main: mainSummary("left", githubUnavailable(repo, githubToken)), site: skipped, productMap: untouched };
+  }
+
+  const main = await resetMain(githubToken, repo, mode, dryRun);
+  const atBaseline = main.outcome === "reset" || main.outcome === "at-baseline" || main.outcome === "baseline-created";
+  const site =
+    atBaseline && main.baselineSha
+      ? await deploySite(options.vercelToken, options.vercelProject, repo, main.baselineSha, dryRun)
+      : skipped;
+  const productMap = await forgetRemovedControls(options, main, dryRun);
+  return { main, site, productMap };
+}
+
+/**
+ * What a reset would do to `main`, the demo site and the product map, changing nothing. The
+ * console shows it in the confirmation, so the person knows how many commits go before they agree.
+ */
+export function checkSiteReset(options: SiteResetOptions): Promise<SiteReset> {
   return resetSite(options, "reset", true);
 }
 
@@ -597,8 +673,8 @@ async function clearTable(
 
 /**
  * Closes what the worker opened, deletes its branches, puts `main` and the demo site back to the
- * baseline, and clears the conversations, request groups, escalations, known routes and trace
- * events of one project. A step that fails is recorded and the rest still runs, because a
+ * baseline, forgets the controls the removed changes taught the product map, and clears the
+ * conversations, request groups, escalations, known routes and trace events of one project. A step that fails is recorded and the rest still runs, because a
  * half-reset demo is worse than one that says which half is left.
  */
 export async function resetDemo(options: ResetOptions): Promise<ResetSummary> {
@@ -611,6 +687,7 @@ export async function resetDemo(options: ResetOptions): Promise<ResetSummary> {
     branchesDeleted: 0,
     main: mainSummary("left"),
     site: siteSummary("skipped", options.vercelProject),
+    productMap: mapSummary(null),
     traceEvents: 0,
     escalations: 0,
     requestGroups: 0,
@@ -639,11 +716,13 @@ export async function resetDemo(options: ResetOptions): Promise<ResetSummary> {
     note(githubUnavailable(repo, githubToken));
   }
 
-  const { main, site } = await resetSite(options, options.main, dryRun);
+  const { main, site, productMap } = await resetSite(options, options.main, dryRun);
   summary.main = main;
   summary.site = site;
+  summary.productMap = productMap;
   note(main.problem);
   note(site.problem);
+  note(productMap.problem);
 
   const { supabaseUrl, supabaseKey, projectId } = options;
   if (supabaseUrl && supabaseKey) {

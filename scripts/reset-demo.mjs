@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Resets the demo: closes the worker's issues and pull requests in the target repository, deletes
 // its branches, moves `main` back to the `demo-baseline` tag, starts a Vercel production
-// deployment of that commit, and clears escalations, request groups, conversations, known routes
-// and trace events. Run through pch-exec so the tokens are in the environment.
+// deployment of that commit, makes the product map forget the controls the removed commits added,
+// and clears escalations, request groups, conversations, known routes and trace events. Run
+// through pch-exec so the tokens are in the environment.
 //
 //   node scripts/reset-demo.mjs [--dry-run] [--skip-main] [--repo owner/name]
 //
@@ -15,9 +16,10 @@
 // `git push origin demo-baseline`) and does not move `main`. To pick a new baseline, delete the
 // tag on GitHub and run the script again from the commit you want.
 //
-// `--skip-main` leaves `main`, the tag and the site alone (use it while the target repository is
-// still being set up, so the tag is not created at a placeholder commit). `--dry-run` changes
-// nothing and reports what a reset would do, including the commit it would deploy.
+// `--skip-main` leaves `main`, the tag, the site and the product map alone (use it while the
+// target repository is still being set up, so the tag is not created at a placeholder commit).
+// `--dry-run` changes nothing and reports what a reset would do, including the commit it would
+// deploy and how many controls the product map would forget.
 
 // Node strips the types on its own. `npm run demo:reset` disables the typeless-package warning
 // this raises, because apps/web is a Next app and does not declare "type": "module".
@@ -68,6 +70,12 @@ function describeMain(main) {
   }
 }
 
+/** One line on what the product map forgot, or why it was left alone. */
+function describeMap(productMap) {
+  if (!productMap.since) return "product map left alone, because main did not move back";
+  return `${would("forgot", "would forget")} ${productMap.controls} control(s), ${productMap.pages} page(s) and ${productMap.transitions} move(s) the product map first saw after ${productMap.since}`;
+}
+
 /** One line on what happened to the demo site. */
 function describeSite(site, main) {
   const where = site.deployment?.inspectorUrl ?? site.deployment?.url ?? site.deployment?.id ?? "";
@@ -104,6 +112,7 @@ async function main() {
   log(`${would("deleted", "would delete")} ${summary.branchesDeleted} branch(es)`);
   log(describeMain(summary.main));
   if (!skipMain) log(describeSite(summary.site, summary.main));
+  if (!skipMain) log(describeMap(summary.productMap));
   log(`${would("deleted", "would delete")} ${summary.traceEvents} trace event(s), ${summary.escalations} escalation(s), ${summary.requestGroups} request group(s), ${summary.conversations} conversation(s), ${summary.knownRoutes} known route(s)`);
   for (const problem of summary.problems) console.warn(`warning: ${problem}`);
 
