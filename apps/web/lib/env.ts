@@ -141,7 +141,10 @@ export function reflexPersonaIds(): {
   };
 }
 
-/** Vercel token when one is set; the forge approval skips the deployment watch without it. */
+/**
+ * Vercel token when one is set. The forge approval skips the deployment watch without it, and Reset
+ * demo says it could not redeploy the site.
+ */
 export const vercelTokenIfSet = (): string | null => process.env.VERCEL_TOKEN || null;
 
 /** Runloop API key. Server-side only. */
@@ -169,7 +172,7 @@ export const escalationEngine = (): EscalationEngine =>
 /** Public origin of this app, used to build the widget script URL and the embed snippet. */
 export const appUrl = (): string => optional("NEXT_PUBLIC_APP_URL", "http://localhost:3000");
 
-/** Vercel project whose deployment the worker waits for after a merge. */
+/** Vercel project whose deployment the worker waits for after a merge, and that Reset demo redeploys. */
 export const targetVercelProject = (): string => optional("TARGET_VERCEL_PROJECT", "novaair");
 
 /** Optional Slack webhook, posted to when an issue and a pull request are drafted. */

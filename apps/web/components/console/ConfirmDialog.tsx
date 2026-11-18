@@ -10,6 +10,8 @@ type Props = {
   /** When set, the action stays disabled until this exact word is typed. */
   typeToConfirm?: string;
   busy?: boolean;
+  /** The action stays disabled while the dialog is still finding out what it will do. */
+  loading?: boolean;
   onConfirm: () => void;
   onCancel: () => void;
 };
@@ -21,6 +23,7 @@ export function ConfirmDialog({
   confirmLabel,
   typeToConfirm,
   busy = false,
+  loading = false,
   onConfirm,
   onCancel,
 }: Props) {
@@ -73,7 +76,7 @@ export function ConfirmDialog({
             type="button"
             className="primary-action is-danger"
             onClick={onConfirm}
-            disabled={busy || !ready}
+            disabled={busy || loading || !ready}
           >
             {confirmLabel}
           </button>

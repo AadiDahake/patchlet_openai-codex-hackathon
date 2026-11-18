@@ -649,6 +649,8 @@ with `Authorization: Bearer <token>` resolves to the project whose slug is
 | `GET /api/github/callback` | `?code=&state=` | stores `github_login`, `github_avatar` and the encrypted token on the project, then redirects to `/console/repository` |
 | `POST /api/github/disconnect` | - | `{ok:true}`, clears the linked account |
 | `GET /api/health` | - | `{ok, db, openai}` |
+| `GET /api/demo/reset` | - (console) | `{main: MainSummary, site: SiteSummary, productMap: ProductMapSummary}` from `lib/demo/reset.ts`: what a reset would do to the bound repository's `main`, the demo site and the product map, with `main.commitsSinceBaseline`, the commits it would remove, and `productMap.controls`, the controls the map would forget. Changes nothing; the confirmation shows it |
+| `POST /api/demo/reset` | - (console) | `{summary: ResetSummary}`: closes the worker's issues and pull requests, deletes its branches, moves `main` back to the `demo-baseline` tag when the baseline is an ancestor of `main` (never creating the tag), starts a Vercel production deployment of the baseline without waiting for it, deletes the `transition`, `affordance` and `site_page` rows first seen after the earliest removed commit (only when `main` moved), and clears the project's conversations, request groups, escalations, known routes and trace. A step that fails is named in `summary.problems` and the rest still runs |
 
 `POST /api/escalate` answers `503 {error, reason: "engine_unavailable"}` and writes nothing when
 `ESCALATION_ENGINE` names an engine that cannot run: `forge` without the keys of its selected
