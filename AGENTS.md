@@ -275,6 +275,12 @@ console pages never see an API key; the only public identifier is the project's 
 - Every colour, radius, shadow and blur is a token in `apps/web/app/globals.css`; the widget has
   its own copy in `packages/widget/src/styles.ts`. Use the classes there rather than styling a
   page on its own, and never write a literal colour in a component.
+- Write `backdrop-filter` alone, never beside a hand-written `-webkit-backdrop-filter`: Tailwind's
+  CSS compiler merges the pair into the prefixed line only, which Chrome ignores, and the compiler
+  already adds the prefix Safari needs. Never put a glass surface inside another element that has
+  a backdrop filter (that element becomes its backdrop root and the page reads straight through);
+  the console bar carries its glass on `::before` for this reason. A popover over body text uses
+  `--glass-overlay`.
 
 ## Commits
 

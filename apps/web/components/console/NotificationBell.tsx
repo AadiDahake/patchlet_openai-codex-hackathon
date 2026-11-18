@@ -1,56 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { formatRelativeTime, reportCountLabel } from "@/lib/console/format";
-import type { Notification } from "@/lib/console/notifications";
-
-/** When the reader last opened the bell. Per browser, because "unread" is a personal thing. */
-const SEEN_KEY = "patchlet.notifications.seen";
-const POLL_MS = 60_000;
-
-function readSeen(): string {
-  try {
-    return window.localStorage.getItem(SEEN_KEY) ?? "";
-  } catch {
-    return "";
-  }
-}
-
-function writeSeen(value: string): void {
-  try {
-    window.localStorage.setItem(SEEN_KEY, value);
-  } catch {
-    // A browser with storage turned off simply counts everything as unread.
-  }
-}
+import { isUnread } from "@/lib/console/notificationState";
+import { useNotifications } from "./NotificationsProvider";
 
 /** Issues and pull requests the worker opened, newest first, with an unread count. */
 export function NotificationBell() {
-  const [items, setItems] = useState<Notification[]>([]);
+  const { items, read, unread, markRead } = useNotifications();
   const [open, setOpen] = useState(false);
-  // Read once at mount. The list itself only arrives from the API afterwards, so the first
-  // render agrees with the server either way.
-  const [seen, setSeen] = useState(() => (typeof window === "undefined" ? "" : readSeen()));
+  // What was unread at the moment the reader opened the list, so it can still say "New" while
+  // it is open even though opening it marked everything read.
+  const [fresh, setFresh] = useState<string[]>([]);
   const root = useRef<HTMLDivElement | null>(null);
-
-  useEffect(() => {
-    let live = true;
-    const load = async (): Promise<void> => {
-      try {
-        const response = await fetch("/api/notifications");
-        const body = (await response.json()) as { notifications?: Notification[] };
-        if (live) setItems(body.notifications ?? []);
-      } catch {
-        // The bell is not worth an error message; it simply stays as it was.
-      }
-    };
-    void load();
-    const timer = setInterval(() => void load(), POLL_MS);
-    return () => {
-      live = false;
-      clearInterval(timer);
-    };
-  }, []);
 
   useEffect(() => {
     if (!open) return;
@@ -68,19 +30,15 @@ export function NotificationBell() {
     };
   }, [open]);
 
-  const unread = useMemo(() => items.filter((item) => item.at > seen).length, [items, seen]);
-
   const toggle = useCallback(() => {
-    setOpen((value) => {
-      const next = !value;
-      const newest = items[0]?.at;
-      if (next && newest) {
-        writeSeen(newest);
-        setSeen(newest);
-      }
-      return next;
-    });
-  }, [items]);
+    if (open) {
+      setOpen(false);
+      return;
+    }
+    setFresh(items.filter((item) => isUnread(item, read)).map((item) => item.id));
+    markRead(items.map((item) => item.id));
+    setOpen(true);
+  }, [open, items, read, markRead]);
 
   return (
     <div className="bell" ref={root}>
@@ -97,7 +55,12 @@ export function NotificationBell() {
         onClick={toggle}
       >
         <BellGlyph />
-        {unread > 0 ? <span className="bell__count">{unread}</span> : null}
+        {/* Keyed by the count, so each rise replays the badge's entrance. */}
+        {unread > 0 ? (
+          <span key={unread} className="bell__count">
+            {unread}
+          </span>
+        ) : null}
       </button>
 
       {open ? (
@@ -107,19 +70,29 @@ export function NotificationBell() {
             <p className="bell__empty">No requests filed yet.</p>
           ) : (
             <ul className="bell__list">
-              {items.map((item) => (
-                <li key={item.id}>
-                  <a className="bell__item" href={item.url} target="_blank" rel="noreferrer">
-                    <span className="bell__item-title">{item.title}</span>
-                    <span className="bell__item-meta">
-                      {item.kind === "issue" ? "Issue" : "Pull request"}
-                      {item.number === null ? "" : ` #${item.number}`}
-                      {` · ${reportCountLabel(item.reportCount, item.userReportCount).toLowerCase()}`}
-                      {item.at ? ` · ${formatRelativeTime(item.at)}` : ""}
-                    </span>
-                  </a>
-                </li>
-              ))}
+              {items.map((item) => {
+                const isNew = fresh.includes(item.id);
+                return (
+                  <li key={item.id}>
+                    <a
+                      className={`bell__item${isNew ? " is-new" : ""}`}
+                      href={item.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      role="menuitem"
+                    >
+                      <span className="bell__item-title">{item.title}</span>
+                      <span className="bell__item-meta">
+                        {isNew ? <span className="bell__item-new">New</span> : null}
+                        {item.kind === "issue" ? "Issue" : "Pull request"}
+                        {item.number === null ? "" : ` #${item.number}`}
+                        {` · ${reportCountLabel(item.reportCount, item.userReportCount).toLowerCase()}`}
+                        {item.at ? ` · ${formatRelativeTime(item.at)}` : ""}
+                      </span>
+                    </a>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </div>
