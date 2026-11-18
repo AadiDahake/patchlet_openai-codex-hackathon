@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { ConfirmDialog } from "@/components/console/ConfirmDialog";
 import { browserSupabase } from "@/lib/auth/browser";
+import { describeReset, describeSitePreview, type ResultLine, type SitePreview } from "@/lib/demo/describe";
 import type { ResetSummary } from "@/lib/demo/reset";
 
 type Props = {
@@ -30,9 +31,13 @@ export function AccountMenu({ email, company, githubLogin }: Props) {
   const [unlinking, setUnlinking] = useState(false);
   const [resetting, setResetting] = useState(false);
   const [askingReset, setAskingReset] = useState(false);
-  const [resetDone, setResetDone] = useState("");
+  const [sitePreview, setSitePreview] = useState<SitePreview | null>(null);
+  const [sitePreviewError, setSitePreviewError] = useState("");
+  const [resetDone, setResetDone] = useState<ResultLine[]>([]);
   const [error, setError] = useState("");
   const root = useRef<HTMLDivElement | null>(null);
+  // Only the newest check may fill the dialog, if it is closed and opened again while one runs.
+  const previewRequest = useRef(0);
 
   useEffect(() => {
     if (!open) return;
@@ -65,9 +70,29 @@ export function AccountMenu({ email, company, githubLogin }: Props) {
     }
   }
 
+  /** Opens the confirmation and asks what a reset would do to the demo site's code. */
+  async function askReset() {
+    const request = ++previewRequest.current;
+    setAskingReset(true);
+    setSitePreview(null);
+    setSitePreviewError("");
+    try {
+      const response = await fetch("/api/demo/reset");
+      const body = (await response.json()) as Partial<SitePreview> & { error?: string };
+      if (!response.ok || !body.main || !body.site) {
+        throw new Error(body.error ?? "The demo site's code could not be checked.");
+      }
+      if (request === previewRequest.current) setSitePreview({ main: body.main, site: body.site });
+    } catch (failure) {
+      if (request !== previewRequest.current) return;
+      setSitePreviewError(failure instanceof Error ? failure.message : "The demo site's code could not be checked.");
+    }
+  }
+
   async function resetDemo() {
     setResetting(true);
     setError("");
+    setResetDone([]);
     try {
       const response = await fetch("/api/demo/reset", { method: "POST" });
       const body = (await response.json()) as { summary?: ResetSummary; error?: string };
@@ -152,12 +177,24 @@ export function AccountMenu({ email, company, githubLogin }: Props) {
             </a>
           )}
           {error ? <p className="account-menu__error">{error}</p> : null}
-          {resetDone ? <p className="account-menu__note">{resetDone}</p> : null}
+          {resetDone.map((line, index) => (
+            <p key={index} className={line.problem ? "account-menu__error" : "account-menu__note"}>
+              {keepTagTogether(line.text)}
+              {line.link ? (
+                <>
+                  {" "}
+                  <a className="ext-link" href={line.link.href} target="_blank" rel="noreferrer">
+                    {line.link.label}
+                  </a>
+                </>
+              ) : null}
+            </p>
+          ))}
           <button
             type="button"
             role="menuitem"
             className="account-menu__item"
-            onClick={() => setAskingReset(true)}
+            onClick={() => void askReset()}
             disabled={resetting}
           >
             {resetting ? "Resetting the demo..." : "Reset demo"}
@@ -184,12 +221,23 @@ export function AccountMenu({ email, company, githubLogin }: Props) {
                 connected repository, the issues and pull requests Patchlet opened are closed and
                 its branches are removed.
               </p>
+              {sitePreview ? (
+                describeSitePreview(sitePreview).map((line) => <p key={line}>{keepTagTogether(line)}</p>)
+              ) : sitePreviewError ? (
+                <p>
+                  {sitePreviewError} A reset still moves main back to the demo-baseline tag when it
+                  is safe, which removes every change merged into the demo site since then.
+                </p>
+              ) : (
+                <p>Checking the demo site&apos;s code on GitHub...</p>
+              )}
               <p>The knowledge base is left exactly as it is.</p>
             </>
           }
           confirmLabel="Reset demo"
           typeToConfirm="reset"
           busy={resetting}
+          loading={!sitePreview && !sitePreviewError}
           onConfirm={() => void resetDemo()}
           onCancel={() => setAskingReset(false)}
         />
@@ -198,14 +246,17 @@ export function AccountMenu({ email, company, githubLogin }: Props) {
   );
 }
 
-/** What the reset actually did, in one line. */
-function describeReset(summary: ResetSummary): string {
-  const parts = [
-    `${summary.conversations} conversation${summary.conversations === 1 ? "" : "s"}`,
-    `${summary.escalations} request${summary.escalations === 1 ? "" : "s"}`,
-    `${summary.issuesClosed + summary.pullRequestsClosed} closed on GitHub`,
-  ];
-  return `Cleared ${parts.join(", ")}.`;
+/** Keeps the tag's name on one line; the browser would otherwise break it at its hyphen. */
+function keepTagTogether(text: string): React.ReactNode[] {
+  return text.split(/(demo-baseline)/).map((part, index) =>
+    part === "demo-baseline" ? (
+      <span key={index} className="whitespace-nowrap">
+        {part}
+      </span>
+    ) : (
+      part
+    ),
+  );
 }
 
 function GithubGlyph() {
