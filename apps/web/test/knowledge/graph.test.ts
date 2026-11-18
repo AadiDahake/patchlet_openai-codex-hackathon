@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
   PASSAGES_ALWAYS_DRAWN,
-  exists,
   indexMap,
   litBy,
   nodeKey,
@@ -150,16 +149,6 @@ describe("litBy", () => {
       nodes: ["c:c-home-help", "g:/", "g:/help/check-in"],
       links: ["on:c-home-help", "opens:c-home-help:/help/check-in"],
     });
-  });
-});
-
-describe("exists", () => {
-  it("tells a node that is still in the map from one a reload removed", () => {
-    expect(exists(index, { kind: "passage", id: "p-site-1" })).toBe(true);
-    expect(exists(index, { kind: "passage", id: "p-orphan" })).toBe(false);
-    expect(exists(index, { kind: "page", id: "/hotels" })).toBe(false);
-    expect(exists(index, { kind: "control", id: "c-home-menu" })).toBe(true);
-    expect(exists(index, { kind: "source", id: "doc-note" })).toBe(true);
   });
 });
 

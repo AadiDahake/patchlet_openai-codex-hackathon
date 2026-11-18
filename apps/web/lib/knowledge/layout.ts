@@ -293,12 +293,10 @@ export class GraphLayout {
     return new Map([...this.nodes].map(([key, node]) => [key, { x: node.x, y: node.y }]));
   }
 
-  /** The box around these nodes, or around all of them, with room for the names under them. */
-  bounds(keys?: Iterable<string>): { x0: number; y0: number; x1: number; y1: number } | null {
-    const nodes = keys ? [...keys].map((key) => this.nodes.get(key)) : [...this.nodes.values()];
+  /** The box around every node, with room for the names under them. Null when there is none. */
+  bounds(): { x0: number; y0: number; x1: number; y1: number } | null {
     let box: { x0: number; y0: number; x1: number; y1: number } | null = null;
-    for (const node of nodes) {
-      if (!node) continue;
+    for (const node of this.nodes.values()) {
       const named = node.kind === "source" || node.kind === "page";
       const wide = named ? nameBox(node).halfWidth : node.radius + 2;
       const below = node.radius + (named ? NAME_HEIGHT + NAME_GAP : 2);

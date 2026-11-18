@@ -86,12 +86,15 @@ describe("GraphLayout", () => {
     expect(again.positions()).toEqual(saved);
   });
 
-  it("measures the box around all of it, or around some of it", () => {
+  it("measures the box around all of it, with room for the names", () => {
     const layout = settled();
-    const whole = layout.bounds()!;
-    const one = layout.bounds(["g:/"])!;
-    expect(whole.x0).toBeLessThanOrEqual(one.x0);
-    expect(whole.x1).toBeGreaterThanOrEqual(one.x1);
+    const box = layout.bounds()!;
+    for (const node of layout.nodes.values()) {
+      expect(node.x - node.radius).toBeGreaterThanOrEqual(box.x0);
+      expect(node.x + node.radius).toBeLessThanOrEqual(box.x1);
+      expect(node.y - node.radius).toBeGreaterThanOrEqual(box.y0);
+      expect(node.y + node.radius).toBeLessThanOrEqual(box.y1);
+    }
     expect(new GraphLayout().bounds()).toBeNull();
   });
 });

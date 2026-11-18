@@ -90,14 +90,6 @@ export function indexMap(map: KnowledgeMap): MapIndex {
   };
 }
 
-/** True when the ref still names something in the map. A reload can remove what was selected. */
-export function exists(index: MapIndex, ref: NodeRef): boolean {
-  if (ref.kind === "source") return index.sources.has(ref.id);
-  if (ref.kind === "passage") return index.passages.has(ref.id);
-  if (ref.kind === "page") return index.pages.has(ref.id);
-  return index.controls.has(ref.id);
-}
-
 /** What a selection opens: the source whose passages show, the page whose controls show. */
 export type Opened = { sourceId: string | null; route: string | null };
 
