@@ -218,7 +218,9 @@ source.
 Sign in at [patchlet.vercel.app](https://patchlet.vercel.app), and the console walks through the rest.
 
 - **Knowledge.** Add a handbook, a documentation site or a note. Patchlet reads it, splits it into passages and
-  records how well it read each one. That is what the agent answers from.
+  records how well it read each one. That is what the agent answers from. The Graph view draws the sources,
+  their passages and the product's pages with the links the data holds, and the Vectors view draws the vector
+  store: every passage as a point, next to the passages it is nearest to.
 - **Repository.** Link a GitHub account and pick the repository. The agent reads it for the third check, and the
   pull request lands there.
 - **Product map.** The pages, the controls and the moves between them that the agent plans routes over. It is

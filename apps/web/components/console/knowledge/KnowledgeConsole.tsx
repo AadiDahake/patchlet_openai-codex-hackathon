@@ -1,15 +1,19 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useMemo, useState } from "react";
+import { PageHeader } from "@/components/PageHeader";
 import { AgentLive } from "@/components/console/AgentLive";
 import type { ConsoleDocument } from "@/lib/ingest/types";
 import { AddSource } from "./AddSource";
 import { ImportHelpCenter } from "./ImportHelpCenter";
+import { KnowledgeMap } from "./map/KnowledgeMap";
 import { PreviewDrawer } from "./PreviewDrawer";
 import { RecreateIndex } from "./RecreateIndex";
 import { SourceList } from "./SourceList";
 import { TestQuestion } from "./TestQuestion";
+import { KNOWLEDGE_VIEWS, viewFromQuery, type KnowledgeView } from "./views";
 
 type Props = {
   initialDocuments: ConsoleDocument[];
@@ -18,8 +22,21 @@ type Props = {
   repoBound: boolean;
 };
 
-/** Adding sources, seeing what came out of them, and proving what the agent would retrieve. */
+/**
+ * Adding sources, seeing what came out of them, and proving what the agent would retrieve - and,
+ * behind the switch in the heading, the same knowledge as a graph and as a vector store.
+ *
+ * The view lives in the address (`?view=graph`), so a picture can be linked to and the back
+ * button returns to the list.
+ */
 export function KnowledgeConsole({ initialDocuments, siteUrl, repoBound }: Props) {
+  const view = viewFromQuery(useSearchParams().get("view"));
+  const setView = useCallback((next: KnowledgeView) => {
+    const url = new URL(window.location.href);
+    if (next === "sources") url.searchParams.delete("view");
+    else url.searchParams.set("view", next);
+    window.history.pushState(null, "", url);
+  }, []);
   const [documents, setDocuments] = useState(initialDocuments);
   const [previewing, setPreviewing] = useState<ConsoleDocument | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
@@ -116,8 +133,43 @@ export function KnowledgeConsole({ initialDocuments, siteUrl, repoBound }: Props
     [upsert],
   );
 
+  const header = (
+    <PageHeader
+      eyebrow="Knowledge"
+      title="What the agent answers from"
+      description={KNOWLEDGE_VIEWS[view].description}
+      actions={
+        <div className="segmented" role="tablist" aria-label="Knowledge view">
+          {(Object.keys(KNOWLEDGE_VIEWS) as KnowledgeView[]).map((option) => (
+            <button
+              key={option}
+              type="button"
+              role="tab"
+              aria-selected={view === option}
+              className={view === option ? "is-active" : ""}
+              onClick={() => setView(option)}
+            >
+              {KNOWLEDGE_VIEWS[option].label}
+            </button>
+          ))}
+        </div>
+      }
+    />
+  );
+
+  if (view !== "sources") {
+    return (
+      <>
+        {header}
+        <KnowledgeMap view={view} onView={setView} onAddSources={() => setView("sources")} />
+      </>
+    );
+  }
+
   return (
     <>
+      {header}
+
       <div className="kb-bar mb-6">
         <AgentLive />
         <ImportHelpCenter siteUrl={siteUrl} onImported={imported} onError={setError} />

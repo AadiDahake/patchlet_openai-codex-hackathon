@@ -3930,3 +3930,831 @@ body::before {
 .trace-row.is-forge .trace-row__kind {
   color: var(--accent-deep);
 }
+
+/* --- Knowledge graph and vector store ---------------------------------------------- */
+
+/*
+ * One stage, two pictures. What the agent has read is round and moss; the product is square and
+ * ink. Nothing else carries colour, so a kind is told apart by shape first.
+ *
+ * The stage is a plain surface, never glass: the search menu and the detail panel are glass over
+ * it, and a glass parent would be their backdrop root.
+ */
+.kmap {
+  position: relative;
+  /* The detail panel's width and its inset. `PANEL` in KnowledgeMap.tsx is the sum of the two. */
+  --kmap-panel: 348px;
+  --kmap-gap: 12px;
+  --kmap-stage-h: clamp(440px, calc(100vh - var(--app-bar-h) - 236px), 900px);
+}
+
+/* The stage is sized to end just above the fold, so the page gives up its long bottom margin. */
+.console-page:has(> .kmap) {
+  padding-bottom: 32px;
+}
+
+.kmap__stage {
+  position: relative;
+  height: var(--kmap-stage-h);
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: var(--radius);
+  background-color: var(--panel);
+  background-image: radial-gradient(circle, var(--hairline) 1px, transparent 1.5px);
+  background-size: 22px 22px;
+  box-shadow: var(--glass-highlight), var(--shadow);
+}
+
+.kmap.is-waiting,
+.kmap__waiting {
+  display: grid;
+  place-items: center;
+  height: var(--kmap-stage-h);
+  color: var(--muted);
+  font-size: 0.92rem;
+}
+
+.kmap.is-waiting {
+  border: 1px dashed var(--hairline-strong);
+  border-radius: var(--radius);
+}
+
+.kmap__waiting {
+  height: 100%;
+}
+
+.kmap-empty {
+  min-height: 360px;
+  align-content: center;
+}
+
+.kmap-svg {
+  display: block;
+  width: 100%;
+  height: 100%;
+  cursor: grab;
+  touch-action: none;
+  user-select: none;
+  /* The zoom scale. useZoomPan writes the live value onto the layers that hold names, which
+     divide by it to keep their size; this is the value before the first zoom. */
+  --k: 1;
+  animation: kmap-in 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.kmap-svg:active {
+  cursor: grabbing;
+}
+
+@keyframes kmap-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+/* Lines. A line is quiet until what it joins is pointed at. */
+.kmap-link {
+  fill: none;
+  stroke: var(--hairline-strong);
+  stroke-width: 1;
+  vector-effect: non-scaling-stroke;
+  transition: opacity 140ms ease, stroke 140ms ease;
+}
+
+.kmap-link.is-holds {
+  stroke: var(--accent-line-strong);
+}
+
+.kmap-link.is-read {
+  stroke: var(--accent);
+  stroke-dasharray: 4 4;
+  stroke-width: 1.2;
+}
+
+.kmap-link.is-move {
+  stroke: var(--hairline);
+}
+
+.kmap-link.is-opens,
+.kmap-link.is-reveals {
+  stroke: var(--faint);
+}
+
+.kmap-link.is-reveals {
+  stroke-dasharray: 2 3;
+}
+
+/* The vector view: a passage and each of its nearest passages, then the ones pgvector returned. */
+.kmap-link.is-mesh {
+  stroke: var(--accent-line);
+}
+
+.kmap-link.is-nearest {
+  stroke: var(--accent-deep);
+  stroke-width: 1.6;
+}
+
+.kmap-svg.has-focus .kmap-link:not(.is-lit) {
+  opacity: 0.4;
+}
+
+.kmap-link.is-lit.is-holds,
+.kmap-link.is-lit.is-read,
+.kmap-link.is-lit.is-mesh {
+  stroke: var(--accent-deep);
+}
+
+.kmap-link.is-lit.is-move,
+.kmap-link.is-lit.is-opens,
+.kmap-link.is-lit.is-reveals {
+  stroke: var(--muted);
+}
+
+/* A page with two hundred controls has two hundred of these, so they stay light when lit. */
+.kmap-link.is-lit.is-on {
+  stroke: var(--hairline-strong);
+}
+
+.kmap-link.is-sample {
+  stroke-width: 1.6;
+}
+
+.kmap-link.is-sample.is-move {
+  stroke: var(--muted);
+}
+
+.kmap-link.is-sample.is-mesh {
+  stroke: var(--accent);
+}
+
+/* Points of the vector view sit on top of each other where two passages say the same thing, so
+   they are a little see-through: a darker point is more than one passage. */
+.kmap-svg.is-vectors .kmap-node .kmap-shape {
+  fill-opacity: 0.82;
+}
+
+/* Nodes. */
+.kmap-node {
+  cursor: pointer;
+  outline: none;
+  transition: opacity 140ms ease;
+}
+
+.kmap-hit {
+  fill: transparent;
+  stroke: none;
+}
+
+.kmap-shape {
+  vector-effect: non-scaling-stroke;
+  transition: fill 140ms ease, stroke 140ms ease;
+}
+
+.kmap-halo {
+  fill: var(--accent-ring);
+  transition: fill 140ms ease;
+}
+
+:is(.kmap-node, .kmap-mark).is-source .kmap-shape {
+  fill: var(--accent-deep);
+}
+
+:is(.kmap-node, .kmap-mark).is-passage .kmap-shape {
+  fill: var(--sage);
+  stroke: var(--accent);
+  stroke-width: 1;
+}
+
+:is(.kmap-node, .kmap-mark).is-page .kmap-shape {
+  fill: var(--panel);
+  stroke: var(--ink);
+  stroke-width: 1.6;
+}
+
+:is(.kmap-node, .kmap-mark).is-control .kmap-shape {
+  fill: var(--muted);
+}
+
+.kmap-node.is-source:hover .kmap-shape,
+.kmap-node.is-source.is-selected .kmap-shape,
+.kmap-node.is-passage:hover .kmap-shape,
+.kmap-node.is-passage.is-selected .kmap-shape {
+  fill: var(--accent);
+}
+
+.kmap-node.is-source:hover .kmap-halo,
+.kmap-node.is-source.is-selected .kmap-halo {
+  fill: var(--accent-line-strong);
+}
+
+.kmap-node.is-page:hover .kmap-shape,
+.kmap-node.is-page.is-selected .kmap-shape {
+  fill: var(--accent-soft);
+}
+
+.kmap-node.is-control:hover .kmap-shape,
+.kmap-node.is-control.is-selected .kmap-shape {
+  fill: var(--ink);
+}
+
+.kmap-node:focus-visible .kmap-hit {
+  fill: var(--accent-ring);
+  stroke: var(--accent);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.kmap-svg.has-focus .kmap-node:not(.is-lit, .is-selected, .is-near) {
+  opacity: 0.34;
+}
+
+/* The outline of the selected node, and of the passages nearest to it. Drawn above every node. */
+.kmap-top {
+  pointer-events: none;
+}
+
+.kmap-ring > * {
+  fill: none;
+  stroke: var(--accent-deep);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+.kmap-ring.is-near > * {
+  stroke: var(--accent);
+  stroke-width: 1.4;
+}
+
+/* Names. The size and the gap divide by the zoom scale, so a name reads the same at any zoom. */
+.kmap-label {
+  fill: var(--ink);
+  font-size: calc(11.5px / var(--k));
+  font-weight: 650;
+  paint-order: stroke fill;
+  stroke: var(--panel);
+  stroke-linejoin: round;
+  stroke-width: calc(4px / var(--k));
+  pointer-events: none;
+  transform: translateY(calc(var(--r) * 1px + 17px / var(--k)));
+}
+
+/* The count under a name. It is shown once the picture is close, and for whatever is pointed at. */
+.kmap-label__sub {
+  display: none;
+  fill: var(--muted);
+  font-size: calc(10.5px / var(--k));
+  font-weight: 500;
+}
+
+.kmap-svg[data-zoom="near"] .kmap-label__sub,
+.kmap-name.is-pointed .kmap-label__sub,
+.kmap-name.is-selected .kmap-label__sub,
+.kmap-label.is-floating .kmap-label__sub {
+  display: inline;
+}
+
+.kmap-names {
+  pointer-events: none;
+}
+
+.kmap-name {
+  transition: opacity 140ms ease;
+}
+
+/* A name with no room at this zoom. GraphView marks it; zooming in gives it room again. */
+.kmap-name[data-crowded] {
+  display: none;
+}
+
+.kmap-svg.has-focus .kmap-name:not(.is-lit, .is-selected) {
+  opacity: 0.34;
+}
+
+/* The name of a dot is drawn above it: the names of sources and pages already sit below. */
+.kmap-label.is-floating {
+  font-weight: 700;
+  transform: translateY(calc(var(--r) * -1px - 8px / var(--k)));
+}
+
+/* A node kind as an inline mark: the legend, a search result, the head of the detail panel. */
+.kmap-mark {
+  flex: none;
+  overflow: visible;
+}
+
+.kmap-mark .kmap-halo {
+  display: none;
+}
+
+/* The bar over the top of the stage: search, then zoom. */
+.kmap__bar {
+  position: absolute;
+  top: var(--kmap-gap);
+  left: var(--kmap-gap);
+  right: var(--kmap-gap);
+  z-index: 3;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.kmap__bar > * {
+  pointer-events: auto;
+}
+
+.kmap-search {
+  position: relative;
+  flex: 0 1 340px;
+  min-width: 0;
+}
+
+.kmap-search__icon {
+  position: absolute;
+  top: 14px;
+  left: 13px;
+  color: var(--faint);
+  pointer-events: none;
+}
+
+.kmap-search__input {
+  padding-left: 36px;
+  background: var(--glass-overlay);
+  box-shadow: var(--glass-highlight);
+}
+
+.kmap-search__input::-webkit-search-cancel-button {
+  appearance: none;
+}
+
+.kmap-search__menu {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  width: min(440px, calc(100vw - 64px));
+  padding: 6px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 14px;
+  background: var(--glass-overlay);
+  box-shadow: var(--glass-highlight), var(--shadow-lift);
+  backdrop-filter: blur(var(--blur)) saturate(150%);
+}
+
+.kmap-search__list {
+  display: grid;
+  gap: 2px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.kmap-search__hit {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0 10px;
+  padding: 7px 10px;
+  border-radius: 9px;
+  cursor: pointer;
+}
+
+.kmap-search__hit.is-active {
+  background: var(--accent-soft);
+}
+
+.kmap-search__label {
+  overflow: hidden;
+  color: var(--ink);
+  font-size: 0.88rem;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kmap-search__context {
+  grid-column: 2;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kmap-search__none {
+  margin: 0;
+  padding: 10px 12px;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.kmap__zoom {
+  display: inline-flex;
+  flex: none;
+  overflow: hidden;
+  height: 42px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: var(--radius-field);
+  background: var(--glass-overlay);
+  box-shadow: var(--glass-highlight);
+}
+
+.kmap__zoom button {
+  display: grid;
+  min-width: 38px;
+  place-items: center;
+  padding: 0 10px;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 0.82rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.kmap__zoom button + button {
+  border-left: 1px solid var(--hairline);
+}
+
+.kmap__zoom button:hover {
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+}
+
+.kmap__zoom button:focus-visible {
+  outline: none;
+  box-shadow: inset var(--focus);
+}
+
+/* The legend and the hint, over the bottom of the stage. */
+.kmap__foot {
+  position: absolute;
+  right: var(--kmap-gap);
+  bottom: var(--kmap-gap);
+  left: var(--kmap-gap);
+  z-index: 2;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  pointer-events: none;
+}
+
+.kmap.has-detail .kmap__foot {
+  right: calc(var(--kmap-panel) + var(--kmap-gap) * 2);
+}
+
+.kmap-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+  margin: 0;
+  padding: 8px 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 14px;
+  background: var(--glass-overlay);
+  box-shadow: var(--glass-highlight);
+  color: var(--muted);
+  font-size: 0.8rem;
+  list-style: none;
+}
+
+.kmap-legend li {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  white-space: nowrap;
+}
+
+.kmap-legend strong {
+  color: var(--ink);
+  font-weight: 700;
+}
+
+/* At the far end of the bar, where the detail panel goes: the two are never shown together. */
+.kmap__bar .kmap__hint {
+  margin: 12px 6px 0 auto;
+  color: var(--faint);
+  font-size: 0.78rem;
+  pointer-events: none;
+  text-align: right;
+}
+
+.kmap.has-detail .kmap__hint {
+  display: none;
+}
+
+@media (hover: none), (max-width: 1100px) {
+  .kmap__hint {
+    display: none;
+  }
+}
+
+/* The detail panel: glass over the right edge of the stage. */
+.kmap-detail {
+  position: absolute;
+  top: var(--kmap-gap);
+  right: var(--kmap-gap);
+  bottom: var(--kmap-gap);
+  z-index: 4;
+  display: flex;
+  width: var(--kmap-panel);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 14px;
+  background: var(--glass-overlay);
+  box-shadow: var(--glass-highlight), var(--shadow-lift);
+  backdrop-filter: blur(var(--blur)) saturate(150%);
+  animation: kmap-detail-in 420ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes kmap-detail-in {
+  from {
+    opacity: 0;
+    transform: translateX(10px) scale(0.99);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+  .kmap-detail,
+  .kmap-search__menu {
+    background: var(--panel);
+  }
+}
+
+.kmap-detail__head {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px 12px;
+  padding: 14px 14px 12px 18px;
+  border-bottom: 1px solid var(--hairline);
+}
+
+.kmap-detail__kind {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--accent);
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.kmap-detail__close {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.kmap-detail__close:hover {
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+}
+
+.kmap-detail__close:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+.kmap-detail__title {
+  grid-column: 1 / -1;
+  margin: 0;
+  font-family: var(--font-serif);
+  font-size: 1.3rem;
+  font-weight: 500;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.kmap-detail__body {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  align-content: start;
+  gap: 18px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 14px 18px 20px;
+}
+
+/* Facts sit two to a row, each under its own label. A long one takes the row. */
+.kmap-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px 16px;
+  margin: 0;
+}
+
+.kmap-fact {
+  display: grid;
+  align-content: start;
+  gap: 3px;
+}
+
+.kmap-fact.is-wide {
+  grid-column: 1 / -1;
+}
+
+.kmap-fact dt,
+.kmap-detail__heading {
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.03em;
+  text-transform: uppercase;
+}
+
+.kmap-fact dd {
+  min-width: 0;
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.88rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+/* A fact whose value is a node is a row like any other, pulled back to the value's own edge.
+   It has the width to itself, so the name wraps instead of being cut. */
+.kmap-fact dd .kmap-jump {
+  width: calc(100% + 16px);
+  margin: -5px -8px;
+  align-items: start;
+}
+
+.kmap-fact dd .kmap-jump .kmap-mark {
+  margin-top: 2px;
+}
+
+.kmap-fact dd .kmap-jump__label {
+  white-space: normal;
+}
+
+.kmap-detail__heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  margin: 0 0 6px;
+}
+
+.kmap-detail__heading span {
+  color: var(--faint);
+  font-weight: 600;
+  letter-spacing: normal;
+  text-transform: none;
+}
+
+.kmap-detail__text {
+  margin: 0;
+  color: var(--ink);
+  font-size: 0.9rem;
+  line-height: 1.6;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.kmap-detail__note {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.875rem;
+}
+
+.kmap-detail__note.is-error {
+  color: var(--danger-ink);
+}
+
+.kmap-jumps {
+  display: grid;
+  gap: 1px;
+  margin: 0 -8px;
+  padding: 0;
+  list-style: none;
+}
+
+.kmap-jump {
+  display: grid;
+  width: 100%;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: center;
+  gap: 0 8px;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  font-size: 0.88rem;
+  line-height: 1.4;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color 140ms ease;
+}
+
+.kmap-jump:has(.kmap-jump__lead) {
+  grid-template-columns: auto auto minmax(0, 1fr);
+}
+
+.kmap-jump:hover {
+  background: var(--accent-soft);
+}
+
+.kmap-jump:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+.kmap-jump__lead {
+  color: var(--accent-deep);
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.kmap-jump__label {
+  overflow: hidden;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.kmap-jump__aside {
+  grid-column: -2;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 0.78rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/*
+ * Narrow: the stage keeps the whole width, and the detail and the legend run under it in the
+ * page's own scroll, so nothing covers a picture that is already small. The stage stops short
+ * of the fold, so the head of whatever is under it shows that there is more to read.
+ */
+@media (max-width: 899px) {
+  .kmap {
+    display: flex;
+    flex-direction: column;
+    --kmap-stage-h: clamp(320px, 54vh, 480px);
+  }
+
+  .kmap-detail {
+    order: 1;
+  }
+
+  .kmap__foot {
+    order: 2;
+  }
+
+  .kmap__foot,
+  .kmap-detail {
+    position: static;
+  }
+
+  .kmap__foot {
+    margin-top: 10px;
+  }
+
+  .kmap-legend {
+    flex: 1;
+  }
+
+  .kmap-detail {
+    width: auto;
+    margin-top: 12px;
+    animation-name: kmap-in;
+  }
+
+  .kmap-detail__body {
+    overflow: visible;
+  }
+
+  .kmap-search {
+    flex: 1 1 auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .kmap-detail {
+    animation-name: kmap-in;
+  }
+}
