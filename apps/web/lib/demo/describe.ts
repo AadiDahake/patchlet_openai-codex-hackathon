@@ -2,10 +2,10 @@
  * What the console says about a demo reset: before it, in the confirmation, and after it, in the
  * account menu. Pure, so the words are tested against every outcome the reset can report.
  */
-import type { MainSummary, ResetSummary, SiteSummary } from "@/lib/demo/reset";
+import type { ProductMapSummary, ResetSummary, SiteReset, SiteSummary } from "@/lib/demo/reset";
 
-/** What a reset would do to `main` and the site, as `GET /api/demo/reset` answers it. */
-export type SitePreview = { main: MainSummary; site: SiteSummary };
+/** What a reset would do to `main`, the site and the product map, as `GET /api/demo/reset` answers it. */
+export type SitePreview = SiteReset;
 
 /** One line of the result. A problem is shown as one; a link names the deployment. */
 export type ResultLine = {
@@ -20,6 +20,13 @@ function commits(count: number): string {
 
 function plural(count: number, word: string): string {
   return `${count} ${word}${count === 1 ? "" : "s"}`;
+}
+
+/** The confirmation's words about the product map, once `main` would move back. */
+function mapPreview(productMap: ProductMapSummary): string | null {
+  if (productMap.problem) return productMap.problem;
+  if (!productMap.since || productMap.controls === 0) return null;
+  return `The product map forgets the ${plural(productMap.controls, "control")} it first saw after the first of those commits, so the agent stops pointing at them.`;
 }
 
 /** The confirmation's words about the site, once `main` is known to reach the baseline. */
@@ -43,11 +50,12 @@ function sitePreview(site: SiteSummary): string | null {
  * knows how many merged commits a reset removes before they agree to it.
  */
 export function describeSitePreview(preview: SitePreview): string[] {
-  const { main, site } = preview;
+  const { main, site, productMap } = preview;
   switch (main.outcome) {
     case "reset":
       return [
         `Every change merged into the demo site since the demo-baseline tag is removed. Main goes back to the tag, which takes away ${commits(main.commitsSinceBaseline)}.`,
+        mapPreview(productMap),
         sitePreview(site),
       ].filter((line): line is string => Boolean(line));
     case "at-baseline":
@@ -98,6 +106,16 @@ export function describeReset(summary: ResetSummary): ResultLine[] {
       text: `Removed the ${commits(summary.main.commitsSinceBaseline)} merged into the demo site since the baseline.`,
       problem: false,
     });
+    // A map that could not be cleared is in the problems, which follow.
+    if (summary.productMap.since && !summary.productMap.problem) {
+      lines.push({
+        text:
+          summary.productMap.controls > 0
+            ? `The product map forgot ${plural(summary.productMap.controls, "control")} it first saw after the first removed commit.`
+            : "The product map had no controls from after the first removed commit to forget.",
+        problem: false,
+      });
+    }
   } else if (summary.main.outcome === "at-baseline") {
     lines.push({ text: "Main was already at the baseline.", problem: false });
   }

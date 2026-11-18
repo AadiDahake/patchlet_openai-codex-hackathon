@@ -79,10 +79,11 @@ export function AccountMenu({ email, company, githubLogin }: Props) {
     try {
       const response = await fetch("/api/demo/reset");
       const body = (await response.json()) as Partial<SitePreview> & { error?: string };
-      if (!response.ok || !body.main || !body.site) {
+      if (!response.ok || !body.main || !body.site || !body.productMap) {
         throw new Error(body.error ?? "The demo site's code could not be checked.");
       }
-      if (request === previewRequest.current) setSitePreview({ main: body.main, site: body.site });
+      const preview = { main: body.main, site: body.site, productMap: body.productMap };
+      if (request === previewRequest.current) setSitePreview(preview);
     } catch (failure) {
       if (request !== previewRequest.current) return;
       setSitePreviewError(failure instanceof Error ? failure.message : "The demo site's code could not be checked.");

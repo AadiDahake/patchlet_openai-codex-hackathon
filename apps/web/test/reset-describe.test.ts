@@ -30,6 +30,8 @@ const FORGOTTEN: ProductMapSummary = {
   problem: null,
 };
 
+const UNTOUCHED: ProductMapSummary = { since: null, controls: 0, pages: 0, transitions: 0, problem: null };
+
 function summary(overrides: Partial<ResetSummary> = {}): ResetSummary {
   return {
     dryRun: false,
@@ -52,14 +54,15 @@ function summary(overrides: Partial<ResetSummary> = {}): ResetSummary {
 
 describe("describeSitePreview", () => {
   it("says how many merged commits a reset removes and that the site redeploys", () => {
-    expect(describeSitePreview({ main: MAIN_RESET, site: { ...DEPLOYING, deployment: null } })).toEqual([
+    expect(describeSitePreview({ main: MAIN_RESET, site: { ...DEPLOYING, deployment: null }, productMap: FORGOTTEN })).toEqual([
       "Every change merged into the demo site since the demo-baseline tag is removed. Main goes back to the tag, which takes away 3 commits.",
+      "The product map forgets the 11 controls it first saw after the first of those commits, so the agent stops pointing at them.",
       "Vercel then deploys the baseline. The site is back in about a minute.",
     ]);
   });
 
   it("uses the singular for one commit", () => {
-    const [first] = describeSitePreview({ main: { ...MAIN_RESET, commitsSinceBaseline: 1 }, site: DEPLOYING });
+    const [first] = describeSitePreview({ main: { ...MAIN_RESET, commitsSinceBaseline: 1 }, site: DEPLOYING, productMap: FORGOTTEN });
     expect(first).toContain("which takes away 1 commit.");
   });
 
@@ -67,6 +70,7 @@ describe("describeSitePreview", () => {
     const lines = describeSitePreview({
       main: { ...MAIN_RESET, outcome: "at-baseline", commitsSinceBaseline: 0 },
       site: { ...DEPLOYING, outcome: "serving" },
+      productMap: UNTOUCHED,
     });
     expect(lines).toEqual([
       "Main is already at the demo-baseline tag, so no commits are removed.",
@@ -79,6 +83,7 @@ describe("describeSitePreview", () => {
     const lines = describeSitePreview({
       main: { ...MAIN_RESET, outcome: "no-baseline", commitsSinceBaseline: 0, problem },
       site: { outcome: "skipped", project: "novaair", deployment: null, problem: null },
+      productMap: UNTOUCHED,
     });
     expect(lines).toEqual([problem]);
   });
@@ -88,6 +93,7 @@ describe("describeSitePreview", () => {
     const lines = describeSitePreview({
       main: MAIN_RESET,
       site: { outcome: "failed", project: "novaair", deployment: null, problem },
+      productMap: UNTOUCHED,
     });
     expect(lines[1]).toBe(problem);
   });
@@ -98,6 +104,7 @@ describe("describeReset", () => {
     expect(describeReset(summary())).toEqual([
       { text: "Cleared 2 conversations, 1 request, 2 closed on GitHub.", problem: false },
       { text: "Removed the 3 commits merged into the demo site since the baseline.", problem: false },
+      { text: "The product map forgot 11 controls it first saw after the first removed commit.", problem: false },
       {
         text: "The site is redeploying from the baseline and is back in about a minute.",
         problem: false,
@@ -121,9 +128,22 @@ describe("describeReset", () => {
       summary({
         main: { ...MAIN_RESET, outcome: "failed", problem },
         site: { outcome: "skipped", project: "novaair", deployment: null, problem: null },
+        productMap: UNTOUCHED,
         problems: [problem],
       }),
     );
     expect(lines.map((line) => line.text)).toEqual(["Cleared 2 conversations, 1 request, 2 closed on GitHub.", problem]);
+  });
+
+  it("names a product map that could not be cleared as a problem, not as done", () => {
+    const problem = "The product map could not forget the controls of the removed changes (transition answered 401).";
+    const lines = describeReset(summary({ productMap: { ...FORGOTTEN, controls: 0, problem }, problems: [problem] }));
+    expect(lines.some((line) => line.text.startsWith("The product map forgot"))).toBe(false);
+    expect(lines.at(-1)).toEqual({ text: problem, problem: true });
+  });
+
+  it("says so when the map had nothing from the removed changes", () => {
+    const lines = describeReset(summary({ productMap: { ...FORGOTTEN, controls: 0 } }));
+    expect(lines[2]?.text).toBe("The product map had no controls from after the first removed commit to forget.");
   });
 });
