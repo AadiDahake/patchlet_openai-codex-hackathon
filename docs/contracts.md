@@ -129,7 +129,13 @@ create table feature_request_group (
   -- run that held it fails.
   issue_claim uuid references escalation on delete set null,
   first_seen timestamptz not null default now(),
-  last_seen timestamptz not null default now()
+  last_seen timestamptz not null default now(),
+  -- Migration 0019: when the issue and the pull request were opened. A trigger stamps each one
+  -- when its URL changes and clears it when the URL is cleared, so no writer sets them by hand.
+  -- `opened_at` is the later of the two, and the console bell orders by it.
+  issue_opened_at timestamptz,
+  pr_opened_at timestamptz,
+  opened_at timestamptz generated always as (greatest(issue_opened_at, pr_opened_at)) stored
 );
 
 create table trace_event (
@@ -636,6 +642,8 @@ with `Authorization: Bearer <token>` resolves to the project whose slug is
 | `POST /api/opportunities/:groupId/measure` | - | `{outcome: DeploymentOutcome}` from the outcome query; `409 {reason: "no_capability_spec" \| "no_outcome_events"}` |
 | `GET /api/trace/stream` | `?since=&conversationId=&escalationId=&groupId=` | SSE; `id:` is the `trace_event.id`, `event: trace`, `data: TraceEvent` |
 | `GET /api/trace` | same filters, `?since=&limit=` | `{events: TraceEvent[]}` backfill |
+| `GET /api/notifications` | - | `{notifications: Notification[]}`: the ten newest issues and pull requests the worker opened, each dated by when it was opened |
+| `GET /api/notifications/stream` | - | SSE; `event: notifications`, `data: {notifications: Notification[]}`, sent at once and then whenever the list changes |
 | `POST /api/auth/signup` | `{email, password, company}` | creates the account already confirmed through the Supabase admin API; the browser then signs in with the password |
 | `GET /api/github/connect` | - | redirects to GitHub's authorize page with `scope=repo` and a signed state cookie |
 | `GET /api/github/callback` | `?code=&state=` | stores `github_login`, `github_avatar` and the encrypted token on the project, then redirects to `/console/repository` |
@@ -655,6 +663,12 @@ well inside the 300 s a serverless function is allowed.
 
 `GET /api/trace/stream` polls Postgres every 700 ms, honours `Last-Event-ID`, sends a `: ping`
 comment every 15 s, and closes cleanly after 240 s so `EventSource` reconnects.
+
+`GET /api/notifications/stream` uses the same loop (`apps/web/lib/sse.ts`) every 2 s. The console
+layout holds one connection for every page. Read state is per browser, by notification id, in
+`localStorage`. A pull request that appears after the first list a page received shows a notice
+once per browser (`apps/web/lib/console/notificationState.ts`). A pull request that was already
+there when the page opened only counts as unread in the bell.
 
 ### Trace detail shapes
 
