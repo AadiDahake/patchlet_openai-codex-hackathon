@@ -248,7 +248,7 @@ export function KnowledgeMap({ view, onView, onAddSources }: Props) {
                 <path d="M3 7h8M7 3v8" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
               </svg>
             </button>
-            <button type="button" className="kmap__fit" onClick={() => handle.current?.fit()}>
+            <button type="button" onClick={() => handle.current?.fit()}>
               Fit
             </button>
           </div>
