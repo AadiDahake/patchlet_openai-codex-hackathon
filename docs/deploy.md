@@ -24,7 +24,7 @@ Environment variables, all as plain environment variables on the project (Produc
 | `SUPABASE_SERVICE_ROLE_KEY` | secret, server-side only |
 | `SUPABASE_ANON_KEY` | not read by the app today, set it for completeness |
 | `GITHUB_TOKEN` | secret, fine-grained, contents/issues/pull-requests on the target repository only |
-| `VERCEL_TOKEN` | secret, used to watch the target project's deployments |
+| `VERCEL_TOKEN` | secret, used to watch the target project's deployments and, from Reset demo, to deploy its `demo-baseline` commit |
 | `PATCHLET_PROJECT_SLUG` | `novaair` |
 | `ESCALATION_ENGINE` | `local`. `forge` is refused until the Reflex/Runloop engine exists |
 | `NEXT_PUBLIC_APP_URL` | the production origin, for example `https://patchlet-codex.vercel.app` |

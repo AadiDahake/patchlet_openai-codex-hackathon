@@ -1,28 +1,27 @@
 #!/usr/bin/env node
 // Resets the demo: closes the worker's issues and pull requests in the target repository, deletes
-// its branches, clears escalations, request groups, conversations, known routes and trace events,
-// and moves `main` back to the `demo-baseline` tag. Run through vault-exec so the tokens are in
-// the environment.
+// its branches, moves `main` back to the `demo-baseline` tag, starts a Vercel production
+// deployment of that commit, and clears escalations, request groups, conversations, known routes
+// and trace events. Run through pch-exec so the tokens are in the environment.
 //
 //   node scripts/reset-demo.mjs [--dry-run] [--skip-main] [--repo owner/name]
 //
 // The knowledge base is never touched: sources take minutes to read and cost money to embed.
 //
-// Everything except the `main` reset is shared with the console's Reset demo action and lives in
-// apps/web/lib/demo/reset.ts. Moving `main` stays here, because a force push is not something a
-// button in a browser should do.
+// Everything here is the console's Reset demo action, shared through apps/web/lib/demo/reset.ts;
+// that file's header holds the rules that keep the forced update of `main` safe. The one thing
+// only this script does: when the repository has no `demo-baseline` tag, it creates the tag at
+// the current head of `main` (the same as `git tag demo-baseline` followed by
+// `git push origin demo-baseline`) and does not move `main`. To pick a new baseline, delete the
+// tag on GitHub and run the script again from the commit you want.
 //
-// `--skip-main` leaves the `main` branch and the tag alone (use it while the target repository is
-// still being set up, so the tag is not created at a placeholder commit).
-//
-// The `demo-baseline` tag marks the commit `main` is reset to. If the tag does not exist, the
-// first run creates it at the current head of `main` (the same thing as `git tag demo-baseline`
-// followed by `git push origin demo-baseline`) and does not move `main`. To pick a new baseline,
-// delete the tag on GitHub and run the script again from the commit you want.
+// `--skip-main` leaves `main`, the tag and the site alone (use it while the target repository is
+// still being set up, so the tag is not created at a placeholder commit). `--dry-run` changes
+// nothing and reports what a reset would do, including the commit it would deploy.
 
 // Node strips the types on its own. `npm run demo:reset` disables the typeless-package warning
 // this raises, because apps/web is a Next app and does not declare "type": "module".
-import { resetDemo } from "../apps/web/lib/demo/reset.ts";
+import { BASELINE_TAG, resetDemo } from "../apps/web/lib/demo/reset.ts";
 
 const args = process.argv.slice(2);
 const dryRun = args.includes("--dry-run");
@@ -30,30 +29,16 @@ const skipMain = args.includes("--skip-main");
 const repoArg = args.indexOf("--repo");
 const REPO = repoArg >= 0 ? args[repoArg + 1] : (process.env.PATCHLET_REPO ?? "AadiDahake/novaair");
 const PROJECT_SLUG = process.env.PATCHLET_PROJECT_SLUG ?? "novaair";
-const BASELINE_TAG = "demo-baseline";
 
-const GITHUB_TOKEN = process.env.GITHUB_TOKEN ?? null;
-const SUPABASE_URL = process.env.SUPABASE_URL ?? null;
-const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY ?? null;
+const GITHUB_TOKEN = process.env.GITHUB_TOKEN || null;
+const VERCEL_TOKEN = process.env.VERCEL_TOKEN || null;
+const VERCEL_PROJECT = process.env.TARGET_VERCEL_PROJECT || "novaair";
+const SUPABASE_URL = process.env.SUPABASE_URL || null;
+const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || null;
 
 const log = (line) => console.log(`${dryRun ? "[dry-run] " : ""}${line}`);
-
-async function gh(method, path, body) {
-  const response = await fetch(`https://api.github.com${path}`, {
-    method,
-    headers: {
-      Authorization: `Bearer ${GITHUB_TOKEN}`,
-      Accept: "application/vnd.github+json",
-      "X-GitHub-Api-Version": "2022-11-28",
-      ...(body ? { "Content-Type": "application/json" } : {}),
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  if (response.status === 404) return null;
-  if (!response.ok) throw new Error(`${method} ${path} -> ${response.status}: ${(await response.text()).slice(0, 300)}`);
-  if (response.status === 204) return null;
-  return response.json();
-}
+const short = (sha) => (sha ?? "").slice(0, 7);
+const would = (done, planned) => (dryRun ? planned : done);
 
 /** The project whose rows are cleared, looked up by the slug the console manages. */
 async function projectId() {
@@ -67,49 +52,62 @@ async function projectId() {
   return rows[0].id;
 }
 
-async function tagCommitSha(ref) {
-  // A lightweight tag points at the commit; an annotated tag points at a tag object.
-  if (ref.object.type === "commit") return ref.object.sha;
-  const tag = await gh("GET", `/repos/${REPO}/git/tags/${ref.object.sha}`);
-  return tag.object.sha;
+/** One line on what happened to `main`. Problems are printed with the rest, as warnings. */
+function describeMain(main) {
+  switch (main.outcome) {
+    case "reset":
+      return `${would("moved", "would move")} main from ${short(main.mainSha)} back to ${BASELINE_TAG} (${short(main.baselineSha)}), removing ${main.commitsSinceBaseline} commit(s)`;
+    case "at-baseline":
+      return `main already at ${BASELINE_TAG} (${short(main.baselineSha)})`;
+    case "baseline-created":
+      return `tag ${BASELINE_TAG} missing: ${would("created", "would create")} it at main (${short(main.mainSha)}); main is not moved`;
+    case "left":
+      return "main left alone";
+    default:
+      return `main not moved (${main.outcome})`;
+  }
 }
 
-async function resetMain() {
-  const main = await gh("GET", `/repos/${REPO}/git/ref/heads/main`);
-  if (!main) throw new Error("branch main not found");
-  const tag = await gh("GET", `/repos/${REPO}/git/ref/tags/${BASELINE_TAG}`);
-  if (!tag) {
-    log(`tag ${BASELINE_TAG} missing: create it at main (${main.object.sha.slice(0, 7)}); main is not moved`);
-    if (!dryRun) await gh("POST", `/repos/${REPO}/git/refs`, { ref: `refs/tags/${BASELINE_TAG}`, sha: main.object.sha });
-    return "tag created";
+/** One line on what happened to the demo site. */
+function describeSite(site, main) {
+  const where = site.deployment?.inspectorUrl ?? site.deployment?.url ?? site.deployment?.id ?? "";
+  switch (site.outcome) {
+    case "deploying":
+      return dryRun
+        ? `would deploy ${BASELINE_TAG} (${short(main.baselineSha)}) to production of the Vercel project ${site.project}`
+        : `deploying ${BASELINE_TAG} (${short(main.baselineSha)}) to production of ${site.project}: ${where}`;
+    case "building":
+      return `${site.project} is already building ${BASELINE_TAG} for production: ${where}`;
+    case "serving":
+      return `${site.project} already serves ${BASELINE_TAG} in production`;
+    case "skipped":
+      return "site not redeployed, because main is not at the baseline";
+    default:
+      return `site not redeployed (${site.outcome})`;
   }
-  const baseline = await tagCommitSha(tag);
-  if (baseline === main.object.sha) {
-    log(`main already at ${BASELINE_TAG} (${baseline.slice(0, 7)})`);
-    return "unchanged";
-  }
-  log(`force main from ${main.object.sha.slice(0, 7)} back to ${BASELINE_TAG} (${baseline.slice(0, 7)})`);
-  if (!dryRun) await gh("PATCH", `/repos/${REPO}/git/refs/heads/main`, { sha: baseline, force: true });
-  return "reset";
 }
 
 async function main() {
   const summary = await resetDemo({
-    repo: GITHUB_TOKEN ? REPO : null,
+    repo: REPO,
     githubToken: GITHUB_TOKEN,
+    main: skipMain ? "leave" : "reset-or-tag",
+    vercelToken: VERCEL_TOKEN,
+    vercelProject: VERCEL_PROJECT,
     supabaseUrl: SUPABASE_URL,
     supabaseKey: SUPABASE_KEY,
     projectId: SUPABASE_URL && SUPABASE_KEY ? await projectId() : "",
     dryRun,
   });
 
-  log(`${dryRun ? "would close" : "closed"} ${summary.issuesClosed} issue(s) and ${summary.pullRequestsClosed} pull request(s)`);
-  log(`${dryRun ? "would delete" : "deleted"} ${summary.branchesDeleted} branch(es)`);
-  log(`${dryRun ? "would delete" : "deleted"} ${summary.traceEvents} trace event(s), ${summary.escalations} escalation(s), ${summary.requestGroups} request group(s), ${summary.conversations} conversation(s), ${summary.knownRoutes} known route(s)`);
+  log(`${would("closed", "would close")} ${summary.issuesClosed} issue(s) and ${summary.pullRequestsClosed} pull request(s)`);
+  log(`${would("deleted", "would delete")} ${summary.branchesDeleted} branch(es)`);
+  log(describeMain(summary.main));
+  if (!skipMain) log(describeSite(summary.site, summary.main));
+  log(`${would("deleted", "would delete")} ${summary.traceEvents} trace event(s), ${summary.escalations} escalation(s), ${summary.requestGroups} request group(s), ${summary.conversations} conversation(s), ${summary.knownRoutes} known route(s)`);
   for (const problem of summary.problems) console.warn(`warning: ${problem}`);
 
-  const mainState = GITHUB_TOKEN && !skipMain ? await resetMain() : "skipped";
-  console.log(JSON.stringify({ ...summary, repo: REPO, main: mainState }, null, 2));
+  console.log(JSON.stringify(summary, null, 2));
 }
 
 main().catch((error) => {

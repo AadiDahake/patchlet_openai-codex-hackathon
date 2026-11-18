@@ -1,49 +1,153 @@
 /**
- * Reset puts the demo back to its starting position, and a known route is part of that position.
+ * Reset puts the demo back to its starting position: the rows, the known routes, the worker's
+ * issues and pull requests, and the demo site's code.
  *
  * A route the agent remembered answers a question from the last run's product map before a single
- * check runs, so a reset that leaves them behind pins yesterday's answer to today's demo.
+ * check runs, so a reset that leaves them behind pins yesterday's answer to today's demo. A change
+ * a demo run merged stays on the site unless `main` goes back to the baseline and Vercel serves
+ * that commit again, and the console's button does that under the rules in `lib/demo/reset.ts`.
  */
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { resetDemo } from "@/lib/demo/reset";
+import { checkSiteReset, resetDemo, type ResetOptions } from "@/lib/demo/reset";
 
-type Call = { method: string; url: string };
+type Call = { method: string; url: string; body: unknown };
 
-/** Stands in for both PostgREST and GitHub, counting one row per table. */
-function fakeFetch(calls: Call[]): typeof fetch {
+const REPO = "acme/novaair";
+const BASELINE = "b".repeat(40);
+const MAIN = "m".repeat(40);
+const LATER = "f".repeat(40);
+
+/** The GitHub repository, the Vercel project and the database the fake answers for. */
+type World = {
+  mainSha: string;
+  /** The tag ref's object: a commit, an annotated tag object, or no tag at all. */
+  tag: { sha: string; type: "commit" | "tag" } | null;
+  /** What an annotated tag object points at. */
+  tagObject?: { sha: string; type: string };
+  compare: { ahead_by: number; behind_by: number };
+  /** Status GitHub answers the forced update of main with. */
+  updateStatus: number;
+  vercelProject: Record<string, unknown>;
+  /** Status Vercel answers the new deployment with. */
+  deployStatus: number;
+};
+
+function world(overrides: Partial<World> = {}): World {
+  return {
+    mainSha: MAIN,
+    tag: { sha: BASELINE, type: "commit" },
+    compare: { ahead_by: 3, behind_by: 0 },
+    updateStatus: 200,
+    vercelProject: {
+      id: "prj_1",
+      name: "novaair",
+      accountId: "team_1",
+      autoAssignCustomDomains: true,
+      link: { type: "github", org: "acme", repo: "novaair", repoId: 42, productionBranch: "main" },
+      targets: {
+        production: {
+          id: "dpl_later",
+          readyState: "READY",
+          readySubstate: "PROMOTED",
+          meta: { githubCommitSha: LATER },
+        },
+      },
+    },
+    deployStatus: 200,
+    ...overrides,
+  };
+}
+
+const json = (body: unknown, status = 200): Response =>
+  new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+/** Stands in for GitHub, Vercel and PostgREST, recording every call. */
+function fakeFetch(state: World, calls: Call[]): typeof fetch {
   return (async (input: string | URL | Request, init?: RequestInit) => {
     const url = String(input);
     const method = init?.method ?? "GET";
-    calls.push({ method, url });
+    const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined;
+    calls.push({ method, url, body });
+
     if (url.startsWith("https://api.github.com")) {
-      return new Response("[]", { status: 200, headers: { "content-type": "application/json" } });
+      const path = url.replace("https://api.github.com", "");
+      if (path === `/repos/${REPO}/git/ref/heads/main`) return json({ object: { sha: state.mainSha, type: "commit" } });
+      if (path === `/repos/${REPO}/git/ref/tags/demo-baseline`) {
+        return state.tag ? json({ object: state.tag }) : json({ message: "Not Found" }, 404);
+      }
+      if (path.startsWith(`/repos/${REPO}/git/tags/`)) return json({ object: state.tagObject });
+      if (path.startsWith(`/repos/${REPO}/compare/`)) return json(state.compare);
+      if (path === `/repos/${REPO}/git/refs/heads/main` && method === "PATCH") {
+        if (state.updateStatus !== 200) {
+          return json({ message: "Cannot force-update a protected branch." }, state.updateStatus);
+        }
+        return json({ object: { sha: (body as { sha: string }).sha, type: "commit" } });
+      }
+      if (path === `/repos/${REPO}/git/refs` && method === "POST") return json({ ref: "refs/tags/demo-baseline" }, 201);
+      return json([]);
     }
+
+    if (url.startsWith("https://api.vercel.com")) {
+      const path = url.replace("https://api.vercel.com", "");
+      if (path === "/v9/projects/novaair") return json(state.vercelProject);
+      if (path.startsWith("/v13/deployments") && method === "POST") {
+        if (state.deployStatus !== 200) {
+          return json({ error: { code: "forbidden", message: "Not authorized" } }, state.deployStatus);
+        }
+        return json({
+          id: "dpl_new",
+          url: "novaair-new.vercel.app",
+          inspectorUrl: "https://vercel.com/acme/novaair/dpl_new",
+          readyState: "QUEUED",
+        });
+      }
+      return json({ error: { message: "unexpected" } }, 500);
+    }
+
     return new Response(null, { status: 204, headers: { "content-range": "*/1" } });
   }) as unknown as typeof fetch;
 }
 
-const OPTIONS = {
+const DATABASE_ONLY: ResetOptions = {
   repo: null,
   githubToken: null,
+  main: "reset",
+  vercelToken: null,
+  vercelProject: "novaair",
   supabaseUrl: "https://example.supabase.co",
   supabaseKey: "service-role",
   projectId: "project-1",
 };
 
+const CONSOLE: ResetOptions = {
+  ...DATABASE_ONLY,
+  repo: REPO,
+  githubToken: "github-token",
+  vercelToken: "vercel-token",
+};
+
+function run(state: World, options: Partial<ResetOptions> = {}) {
+  const calls: Call[] = [];
+  vi.stubGlobal("fetch", fakeFetch(state, calls));
+  return { calls, summary: resetDemo({ ...CONSOLE, ...options }) };
+}
+
+const writes = (calls: Call[]) =>
+  calls.filter((call) => call.method !== "GET" && !call.url.startsWith("https://example.supabase.co"));
+const mainUpdates = (calls: Call[]) => calls.filter((call) => call.method === "PATCH" && call.url.endsWith("/git/refs/heads/main"));
+const deployments = (calls: Call[]) => calls.filter((call) => call.method === "POST" && call.url.includes("/v13/deployments"));
+const databaseDeletes = (calls: Call[]) => calls.filter((call) => call.method === "DELETE");
+
 afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("resetDemo", () => {
+describe("resetDemo: the database", () => {
   it("clears the project's known routes along with its conversations", async () => {
-    const calls: Call[] = [];
-    vi.stubGlobal("fetch", fakeFetch(calls));
+    const { calls, summary: pending } = run(world(), DATABASE_ONLY);
+    const summary = await pending;
 
-    const summary = await resetDemo(OPTIONS);
-
-    const cleared = calls
-      .filter((call) => call.method === "DELETE")
-      .map((call) => call.url.replace("https://example.supabase.co/rest/v1/", ""));
+    const cleared = databaseDeletes(calls).map((call) => call.url.replace("https://example.supabase.co/rest/v1/", ""));
     expect(cleared).toEqual([
       "trace_event?project_id=eq.project-1",
       "escalation?project_id=eq.project-1",
@@ -52,25 +156,248 @@ describe("resetDemo", () => {
       "known_route?project_id=eq.project-1",
     ]);
     expect(summary.knownRoutes).toBe(1);
-    expect(summary.problems).toEqual(["No repository is bound, so nothing was closed on GitHub."]);
-  });
-
-  it("counts the known routes it would delete without deleting them on a dry run", async () => {
-    const calls: Call[] = [];
-    vi.stubGlobal("fetch", fakeFetch(calls));
-
-    const summary = await resetDemo({ ...OPTIONS, dryRun: true });
-
-    expect(calls.every((call) => call.method === "GET")).toBe(true);
-    expect(summary.knownRoutes).toBe(1);
+    expect(summary.problems).toEqual(["No repository is bound, so the reset does nothing on GitHub or the demo site."]);
+    expect(summary.main.outcome).toBe("left");
+    expect(summary.site.outcome).toBe("skipped");
   });
 
   it("leaves the knowledge base alone", async () => {
-    const calls: Call[] = [];
-    vi.stubGlobal("fetch", fakeFetch(calls));
-
-    await resetDemo(OPTIONS);
+    const { calls, summary } = run(world(), DATABASE_ONLY);
+    await summary;
 
     expect(calls.some((call) => /\/(document|chunk)\?/.test(call.url))).toBe(false);
+  });
+});
+
+describe("resetDemo: main and the demo site", () => {
+  it("moves main back to the baseline and starts a production deployment of it", async () => {
+    const { calls, summary: pending } = run(world());
+    const summary = await pending;
+
+    expect(summary.main).toMatchObject({ outcome: "reset", commitsSinceBaseline: 3, baselineSha: BASELINE, mainSha: MAIN });
+    expect(mainUpdates(calls)).toHaveLength(1);
+    expect(mainUpdates(calls)[0]?.body).toEqual({ sha: BASELINE, force: true });
+
+    const [deploy] = deployments(calls);
+    const query = new URL(deploy?.url ?? "").searchParams;
+    expect(query.get("forceNew")).toBe("1");
+    expect(query.get("teamId")).toBe("team_1");
+    expect(deploy?.body).toEqual({
+      name: "novaair",
+      project: "prj_1",
+      target: "production",
+      gitSource: { type: "github", repoId: 42, ref: "main", sha: BASELINE },
+    });
+    expect(summary.site).toEqual({
+      outcome: "deploying",
+      project: "novaair",
+      deployment: {
+        id: "dpl_new",
+        url: "https://novaair-new.vercel.app/",
+        inspectorUrl: "https://vercel.com/acme/novaair/dpl_new",
+      },
+      problem: null,
+    });
+    expect(summary.problems).toEqual([]);
+  });
+
+  it("reads an annotated tag through its tag object", async () => {
+    const { calls, summary: pending } = run(
+      world({ tag: { sha: "t".repeat(40), type: "tag" }, tagObject: { sha: BASELINE, type: "commit" } }),
+    );
+    const summary = await pending;
+
+    expect(summary.main.baselineSha).toBe(BASELINE);
+    expect(mainUpdates(calls)[0]?.body).toEqual({ sha: BASELINE, force: true });
+  });
+
+  it("changes nothing on main without a baseline tag, never creates one, and says so", async () => {
+    const { calls, summary: pending } = run(world({ tag: null }));
+    const summary = await pending;
+
+    expect(summary.main.outcome).toBe("no-baseline");
+    expect(summary.site.outcome).toBe("skipped");
+    expect(writes(calls).filter((call) => call.url.includes("/git/refs"))).toEqual([]);
+    expect(deployments(calls)).toEqual([]);
+    expect(summary.problems).toContain(
+      "acme/novaair has no demo-baseline tag, so main stays where it is. Tag the commit the demo starts from as demo-baseline so a reset can put the site back.",
+    );
+    expect(databaseDeletes(calls)).toHaveLength(5);
+  });
+
+  it("creates the missing tag at main when the script asks, and does not move main", async () => {
+    const { calls, summary: pending } = run(world({ tag: null }), { main: "reset-or-tag" });
+    const summary = await pending;
+
+    expect(summary.main).toMatchObject({ outcome: "baseline-created", baselineSha: MAIN });
+    const created = calls.find((call) => call.method === "POST" && call.url.endsWith("/git/refs"));
+    expect(created?.body).toEqual({ ref: "refs/tags/demo-baseline", sha: MAIN });
+    expect(mainUpdates(calls)).toEqual([]);
+  });
+
+  it("leaves main alone when it is already at the baseline and production serves it", async () => {
+    const state = world({ mainSha: BASELINE });
+    state.vercelProject.targets = {
+      production: { id: "dpl_base", readyState: "READY", readySubstate: "PROMOTED", meta: { githubCommitSha: BASELINE } },
+    };
+    const { calls, summary: pending } = run(state);
+    const summary = await pending;
+
+    expect(summary.main.outcome).toBe("at-baseline");
+    expect(summary.site.outcome).toBe("serving");
+    expect(writes(calls)).toEqual([]);
+    expect(summary.problems).toEqual([]);
+  });
+
+  it("deploys the baseline when main is back but production still serves a later commit", async () => {
+    // The run that found this: main moved, Vercel built nothing, and the merged change stayed live.
+    const { calls, summary: pending } = run(world({ mainSha: BASELINE }));
+    const summary = await pending;
+
+    expect(summary.main.outcome).toBe("at-baseline");
+    expect(mainUpdates(calls)).toEqual([]);
+    expect(deployments(calls)).toHaveLength(1);
+    expect(summary.site.outcome).toBe("deploying");
+  });
+
+  it("starts no second deployment while one of the baseline is building", async () => {
+    const state = world();
+    state.vercelProject.targets = {
+      production: { id: "dpl_building", readyState: "BUILDING", meta: { githubCommitSha: BASELINE } },
+    };
+    const { calls, summary: pending } = run(state);
+    const summary = await pending;
+
+    expect(summary.site).toMatchObject({ outcome: "building", deployment: { id: "dpl_building" } });
+    expect(deployments(calls)).toEqual([]);
+  });
+
+  it("changes nothing when the baseline is not in the history of main", async () => {
+    const { calls, summary: pending } = run(world({ compare: { ahead_by: 2, behind_by: 4 } }));
+    const summary = await pending;
+
+    expect(summary.main.outcome).toBe("not-ancestor");
+    expect(mainUpdates(calls)).toEqual([]);
+    expect(deployments(calls)).toEqual([]);
+    expect(summary.problems).toContain(
+      "The demo-baseline commit (bbbbbbb) is not in the history of main (mmmmmmm), so main stays where it is. Move the tag to a commit on main, or put main back by hand.",
+    );
+  });
+
+  it("finishes the rest of the reset and names the problem when GitHub refuses the update", async () => {
+    const { calls, summary: pending } = run(world({ updateStatus: 422 }));
+    const summary = await pending;
+
+    expect(summary.main.outcome).toBe("failed");
+    expect(summary.main.problem).toBe(
+      "GitHub refused to move main back to the demo-baseline tag (422: Cannot force-update a protected branch.), so main stays where it is. The token needs write access to acme/novaair, and branch protection must allow a force push to main.",
+    );
+    expect(summary.problems).toContain(summary.main.problem);
+    expect(summary.site.outcome).toBe("skipped");
+    expect(deployments(calls)).toEqual([]);
+    expect(databaseDeletes(calls)).toHaveLength(5);
+  });
+
+  it("treats a missing repository on the update as a refusal, not a success", async () => {
+    const { summary: pending } = run(world({ updateStatus: 404 }));
+    const summary = await pending;
+
+    expect(summary.main.outcome).toBe("failed");
+    expect(summary.main.problem).toContain("(404: Cannot force-update a protected branch.)");
+  });
+
+  it("reports what it would do on a dry run and writes nothing", async () => {
+    const { calls, summary: pending } = run(world(), { dryRun: true });
+    const summary = await pending;
+
+    expect(calls.every((call) => call.method === "GET")).toBe(true);
+    expect(summary.main).toMatchObject({ outcome: "reset", commitsSinceBaseline: 3 });
+    expect(summary.site).toMatchObject({ outcome: "deploying", deployment: null });
+    expect(summary.knownRoutes).toBe(1);
+  });
+
+  it("leaves main and the site alone with --skip-main", async () => {
+    const { calls, summary: pending } = run(world(), { main: "leave" });
+    const summary = await pending;
+
+    expect(summary.main.outcome).toBe("left");
+    expect(summary.site.outcome).toBe("skipped");
+    expect(calls.some((call) => call.url.includes("/git/ref/") || call.url.includes("vercel.com"))).toBe(false);
+  });
+});
+
+describe("resetDemo: Vercel", () => {
+  it("says the site is not redeployed when no Vercel token is configured", async () => {
+    const { calls, summary: pending } = run(world(), { vercelToken: null });
+    const summary = await pending;
+
+    expect(summary.main.outcome).toBe("reset");
+    expect(summary.site.outcome).toBe("failed");
+    expect(summary.site.problem).toBe(
+      "No Vercel token is configured, so the demo site is not redeployed. Until the baseline is deployed, the site keeps serving the changes that main no longer has.",
+    );
+    expect(summary.problems).toContain(summary.site.problem);
+    expect(calls.some((call) => call.url.includes("vercel.com"))).toBe(false);
+  });
+
+  it("names Vercel's refusal and claims no deployment", async () => {
+    const { summary: pending } = run(world({ deployStatus: 403 }));
+    const summary = await pending;
+
+    expect(summary.site.outcome).toBe("failed");
+    expect(summary.site.deployment).toBeNull();
+    expect(summary.site.problem).toBe(
+      "Vercel refused to deploy the demo-baseline commit (bbbbbbb) to novaair (403: Not authorized). Until the baseline is deployed, the site keeps serving the changes that main no longer has.",
+    );
+  });
+
+  it("does not deploy a Vercel project that serves another repository", async () => {
+    const state = world();
+    state.vercelProject.link = { type: "github", org: "someone", repo: "else", repoId: 7 };
+    const { calls, summary: pending } = run(state);
+    const summary = await pending;
+
+    expect(summary.site.outcome).toBe("failed");
+    expect(summary.site.problem).toBe("The Vercel project novaair deploys someone/else, not acme/novaair, so it is not redeployed.");
+    expect(deployments(calls)).toEqual([]);
+  });
+
+  it("does not claim a redeploy when Vercel would stage it instead of serving it", async () => {
+    const state = world();
+    state.vercelProject.autoAssignCustomDomains = false;
+    const { calls, summary: pending } = run(state);
+    const summary = await pending;
+
+    expect(summary.site.outcome).toBe("failed");
+    expect(summary.site.problem).toContain("Undo the rollback in Vercel");
+    expect(deployments(calls)).toEqual([]);
+  });
+});
+
+describe("checkSiteReset", () => {
+  it("counts the commits a reset would remove and writes nothing", async () => {
+    const calls: Call[] = [];
+    vi.stubGlobal("fetch", fakeFetch(world(), calls));
+
+    const preview = await checkSiteReset({
+      repo: REPO,
+      githubToken: "github-token",
+      vercelToken: "vercel-token",
+      vercelProject: "novaair",
+    });
+
+    expect(preview.main).toMatchObject({ outcome: "reset", commitsSinceBaseline: 3 });
+    expect(preview.site.outcome).toBe("deploying");
+    expect(calls.every((call) => call.method === "GET")).toBe(true);
+  });
+
+  it("never creates the baseline tag", async () => {
+    const calls: Call[] = [];
+    vi.stubGlobal("fetch", fakeFetch(world({ tag: null }), calls));
+
+    const preview = await checkSiteReset({ repo: REPO, githubToken: "t", vercelToken: "v", vercelProject: "novaair" });
+
+    expect(preview.main.outcome).toBe("no-baseline");
+    expect(calls.every((call) => call.method === "GET")).toBe(true);
   });
 });
