@@ -1,5 +1,4 @@
 import { redirect } from "next/navigation";
-import { PageHeader } from "@/components/PageHeader";
 import { KnowledgeConsole } from "@/components/console/knowledge/KnowledgeConsole";
 import { currentProjectOrNull } from "@/lib/console/current";
 import { DOCUMENT_COLUMNS, toConsoleDocument } from "@/lib/ingest/run";
@@ -13,20 +12,14 @@ export default async function KnowledgePage() {
   if (!project) redirect("/signin");
   const documents = await loadDocuments(project.id);
 
+  // The heading is drawn by the console itself, because the switch between the list, the graph
+  // and the vector store sits in it.
   return (
-    <>
-      <PageHeader
-        eyebrow="Knowledge"
-        title="What the agent answers from"
-        description="Add a handbook, a documentation site or a note. Patchlet reads it, splits it into passages and remembers how well it read each one."
-      />
-
-      <KnowledgeConsole
-        initialDocuments={documents}
-        siteUrl={project.siteUrl}
-        repoBound={Boolean(project.repoFullName)}
-      />
-    </>
+    <KnowledgeConsole
+      initialDocuments={documents}
+      siteUrl={project.siteUrl}
+      repoBound={Boolean(project.repoFullName)}
+    />
   );
 }
 

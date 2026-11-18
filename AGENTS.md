@@ -100,6 +100,26 @@ the gap. Three rules, all in `docs/opportunities.md`:
   `import.meta.url`, which the page layer lacks at build time). Pages and components import it as
   types only; anything a page needs rendered, the pipeline renders and stores on the row.
 
+## The Knowledge picture draws only what a row holds
+
+`/console/knowledge?view=graph` and `?view=vectors` show what the agent knows as a picture
+(`apps/web/lib/knowledge`, `apps/web/components/console/knowledge/map`). Four rules, each with a
+test in `apps/web/test/knowledge`:
+
+- A link is a stored row, never an inference. A source is tied to a page only when a passage's
+  stored address has that page's origin and route (`pageForAddress`); the same path on another
+  origin is another copy of the product, as in `belongsToSite`.
+- The totals the legend states are computed the way the Knowledge and Product map pages compute
+  theirs, so the three never disagree.
+- A stored vector never reaches the browser. The server sends two numbers per passage
+  (`loadVectorLayout`), and pgvector answers what is nearest (`nearestPassages`).
+- A label is a title a person wrote. An address is shown through `displayAddress`, which drops a
+  loopback host.
+
+Both layouts are deterministic, so the same data always draws the same picture. Positions and
+zoom are written straight onto the SVG, never through React state; keep it that way, it is what
+makes a drag cost one attribute per frame.
+
 ## The forge engine
 
 `apps/web/lib/forge` is the only place that knows Reflex and Runloop exist. The engine
