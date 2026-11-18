@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import type { RequestGroup } from "@patchlet/shared";
 import { outcomeLabel, outcomeTone } from "@/lib/agent/outcome";
@@ -10,6 +10,7 @@ import {
   requestStatusLabel,
   requestStatusTone,
 } from "@/lib/console/format";
+import { useNotifications } from "./NotificationsProvider";
 import { TraceStream } from "./TraceStream";
 
 import type { ConversationSummary } from "@/lib/console/conversations";
@@ -43,6 +44,13 @@ export function ActivityConsole({
   const [chosen, setChosen] = useState<Selection | null>(
     requested ? { kind: "request", id: requested } : null,
   );
+  // A notice's "Open in Activity" can arrive while this page is already open, so a new
+  // `?request=` selects that request too, not only the one the page was loaded with.
+  const [arrivedWith, setArrivedWith] = useState(requested);
+  if (requested !== arrivedWith) {
+    setArrivedWith(requested);
+    if (requested) setChosen({ kind: "request", id: requested });
+  }
   const [eventCount, setEventCount] = useState(0);
   const [live, setLive] = useState(false);
   const [error, setError] = useState("");
@@ -68,6 +76,16 @@ export function ActivityConsole({
   const handleDecision = useCallback(() => {
     void refresh();
   }, [refresh]);
+
+  // The bell's feed changes when the worker opens an issue or a pull request, which is exactly
+  // when a request's status and links here go stale.
+  const { revision } = useNotifications();
+  const lastRevision = useRef(revision);
+  useEffect(() => {
+    if (revision === lastRevision.current) return;
+    lastRevision.current = revision;
+    void refresh();
+  }, [revision, refresh]);
 
   // Nothing chosen yet means the heaviest request, or failing that the newest conversation.
   const selection = useMemo<Selection | null>(() => {

@@ -58,6 +58,9 @@
   /* Glass. The fill is paper with the backdrop showing through; the blur is what makes it frost. */
   --glass: rgba(255, 253, 247, 0.62);
   --glass-strong: rgba(255, 253, 247, 0.84);
+  /* For a popover that floats over body text: Chromium thins the blur near an element's edges,
+     and at the strong fill the text under a menu's last line reads through. */
+  --glass-overlay: rgba(255, 253, 247, 0.95);
   --glass-soft: rgba(235, 231, 220, 0.5);
   --glass-edge: rgba(255, 255, 255, 0.75);
   --glass-highlight: inset 0 1px 0 rgba(255, 255, 255, 0.85);
@@ -138,7 +141,6 @@ body::before {
   background: var(--glass);
   box-shadow: var(--glass-highlight), var(--shadow);
   backdrop-filter: blur(var(--blur)) saturate(150%);
-  -webkit-backdrop-filter: blur(var(--blur)) saturate(150%);
 }
 
 .glass {
@@ -214,14 +216,25 @@ body::before {
   min-height: var(--app-bar-h);
   padding: 14px 32px;
   border-bottom: 1px solid var(--hairline);
-  background: var(--glass-strong);
   box-shadow: var(--glass-highlight);
+}
+
+/*
+ * The bar's glass lives on a layer behind its content, not on the bar itself: an element with a
+ * backdrop filter is the backdrop root of everything inside it, so the menus that open from the
+ * bar would otherwise blur only the bar and let the page read straight through them.
+ */
+.app-bar::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: var(--glass-strong);
   backdrop-filter: blur(var(--blur)) saturate(150%);
-  -webkit-backdrop-filter: blur(var(--blur)) saturate(150%);
 }
 
 @supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
-  .app-bar {
+  .app-bar::before {
     background: var(--paper);
   }
 }
@@ -350,9 +363,8 @@ body::before {
     padding: 8px;
     border: 1px solid var(--hairline);
     border-radius: 14px;
-    background: var(--glass-strong);
+    background: var(--glass-overlay);
     backdrop-filter: blur(var(--blur));
-    -webkit-backdrop-filter: blur(var(--blur));
     box-shadow: var(--glass-highlight), var(--shadow-lift);
   }
 
@@ -433,7 +445,6 @@ body::before {
   background: var(--glass);
   box-shadow: var(--glass-highlight), var(--shadow);
   backdrop-filter: blur(var(--blur)) saturate(150%);
-  -webkit-backdrop-filter: blur(var(--blur)) saturate(150%);
 }
 
 .panel__head {
@@ -489,7 +500,6 @@ body::before {
   background: var(--glass);
   box-shadow: var(--glass-highlight);
   backdrop-filter: blur(var(--blur)) saturate(150%);
-  -webkit-backdrop-filter: blur(var(--blur)) saturate(150%);
 }
 
 .stat__num {
@@ -834,7 +844,6 @@ body::before {
   background: var(--glass);
   box-shadow: var(--glass-highlight), var(--shadow);
   backdrop-filter: blur(var(--blur)) saturate(150%);
-  -webkit-backdrop-filter: blur(var(--blur)) saturate(150%);
   text-align: left;
   cursor: pointer;
   transition: transform 140ms ease, border-color 140ms ease;
@@ -1116,7 +1125,6 @@ body::before {
   background: var(--glass);
   box-shadow: var(--glass-highlight), var(--shadow);
   backdrop-filter: blur(var(--blur)) saturate(150%);
-  -webkit-backdrop-filter: blur(var(--blur)) saturate(150%);
   overflow: hidden;
 }
 
@@ -1727,7 +1735,6 @@ body::before {
   background: var(--glass);
   box-shadow: var(--glass-highlight), var(--shadow);
   backdrop-filter: blur(var(--blur)) saturate(150%);
-  -webkit-backdrop-filter: blur(var(--blur)) saturate(150%);
   transition: transform 140ms ease, border-color 140ms ease;
 }
 
@@ -1987,7 +1994,6 @@ body::before {
   background: var(--glass);
   box-shadow: var(--glass-highlight), var(--shadow);
   backdrop-filter: blur(var(--blur)) saturate(150%);
-  -webkit-backdrop-filter: blur(var(--blur)) saturate(150%);
 }
 
 @media (max-width: 640px) {
@@ -2213,9 +2219,8 @@ body::before {
   padding: 8px;
   border: 1px solid var(--hairline);
   border-radius: 14px;
-  background: var(--glass-strong);
+  background: var(--glass-overlay);
   backdrop-filter: blur(var(--blur)) saturate(150%);
-  -webkit-backdrop-filter: blur(var(--blur)) saturate(150%);
   box-shadow: var(--glass-highlight), var(--shadow-lift);
 }
 
@@ -2345,6 +2350,11 @@ body::before {
   transition: background-color 140ms ease, color 140ms ease;
 }
 
+.bell__trigger:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
 .bell__trigger:hover,
 .bell__trigger.is-open {
   border-color: var(--hairline);
@@ -2364,6 +2374,8 @@ body::before {
   font-size: 0.64rem;
   font-weight: 800;
   line-height: 16px;
+  /* Each rise in the count replays this: the badge is keyed by its number. */
+  animation: bell-count-in 360ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 .bell__menu {
@@ -2375,9 +2387,8 @@ body::before {
   padding: 6px;
   border: 1px solid var(--hairline-strong);
   border-radius: 14px;
-  background: var(--glass-strong);
+  background: var(--glass-overlay);
   backdrop-filter: blur(var(--blur)) saturate(150%);
-  -webkit-backdrop-filter: blur(var(--blur)) saturate(150%);
   box-shadow: var(--glass-highlight), var(--shadow-lift);
 }
 
@@ -2428,6 +2439,271 @@ body::before {
 .bell__item-meta {
   color: var(--muted);
   font-size: 0.76rem;
+}
+
+.bell__item.is-new {
+  background: var(--accent-hover-soft);
+}
+
+.bell__item.is-new:hover {
+  background: var(--accent-soft);
+}
+
+.bell__item-new {
+  margin-right: 6px;
+  color: var(--accent-deep);
+  font-weight: 800;
+}
+
+@keyframes bell-count-in {
+  from {
+    opacity: 0;
+    transform: scale(0.4);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/*
+ * Pull request notices. They float under the bell, over the page and never in its flow, so a
+ * notice arriving moves nothing. Open menus (z-index 30) sit above them.
+ */
+.pr-notices {
+  position: fixed;
+  top: calc(var(--app-bar-h) + 12px);
+  right: 32px;
+  z-index: 25;
+  display: grid;
+  gap: 10px;
+  width: min(400px, calc(100vw - 32px));
+  pointer-events: none;
+}
+
+.pr-notice {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 0 12px;
+  padding: 14px 10px 14px 14px;
+  border: 1px solid var(--hairline-strong);
+  border-radius: 14px;
+  background: var(--glass-overlay);
+  backdrop-filter: blur(var(--blur)) saturate(150%);
+  box-shadow: var(--glass-highlight), var(--shadow-lift);
+  pointer-events: auto;
+  animation: pr-notice-in 420ms cubic-bezier(0.22, 1, 0.36, 1);
+  transition:
+    opacity 180ms ease,
+    transform 180ms ease;
+}
+
+.pr-notice.is-leaving {
+  opacity: 0;
+  transform: translateY(-6px) scale(0.98);
+}
+
+@keyframes pr-notice-in {
+  from {
+    opacity: 0;
+    transform: translateY(-10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@supports not ((backdrop-filter: blur(2px)) or (-webkit-backdrop-filter: blur(2px))) {
+  .pr-notice {
+    background: var(--panel);
+  }
+}
+
+/* Placed by hand: the close button comes last in tab order but sits top right. */
+.pr-notice__glyph {
+  grid-area: 1 / 1;
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border-radius: 50%;
+  background: var(--accent-soft);
+  color: var(--accent-deep);
+}
+
+.pr-notice__body {
+  grid-area: 1 / 2;
+  display: grid;
+  min-width: 0;
+  gap: 2px;
+}
+
+.pr-notice__headline {
+  margin: 0;
+  text-wrap: balance;
+  color: var(--accent-deep);
+  font-size: 0.78rem;
+  font-weight: 800;
+  line-height: 1.4;
+}
+
+.pr-notice__title {
+  margin: 2px 0 0;
+  color: var(--ink);
+  font-size: 0.95rem;
+  font-weight: 600;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+  text-wrap: pretty;
+}
+
+.pr-notice__meta {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
+.pr-notice__actions {
+  display: flex;
+  flex-wrap: wrap;
+  grid-area: 2 / 2 / 3 / 4;
+  align-items: center;
+  gap: 6px 14px;
+  margin-top: 10px;
+}
+
+.pr-notice__primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 32px;
+  padding: 0 13px;
+  border-radius: 999px;
+  background: var(--accent-deep);
+  color: var(--panel);
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+  transition: background-color 140ms ease;
+}
+
+.pr-notice__primary:hover {
+  background: var(--accent);
+}
+
+.pr-notice__secondary {
+  color: var(--accent-deep);
+  font-size: 0.82rem;
+  font-weight: 700;
+  white-space: nowrap;
+  text-decoration: underline;
+  text-decoration-color: var(--accent-line-strong);
+  text-underline-offset: 3px;
+  transition: text-decoration-color 140ms ease;
+}
+
+.pr-notice__secondary:hover {
+  text-decoration-color: var(--accent);
+}
+
+.pr-notice__primary:focus-visible,
+.pr-notice__secondary:focus-visible,
+.pr-notice__close:focus-visible {
+  outline: none;
+  box-shadow: var(--focus);
+}
+
+.pr-notice__secondary:focus-visible {
+  border-radius: 4px;
+}
+
+.pr-notice__close {
+  grid-area: 1 / 3;
+  display: grid;
+  align-self: start;
+  margin-top: -4px;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  transition: background-color 140ms ease, color 140ms ease;
+}
+
+.pr-notice__close:hover {
+  background: var(--accent-hover-soft);
+  color: var(--ink);
+}
+
+.pr-notices__more {
+  justify-self: end;
+  margin: 0;
+  padding: 4px 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 999px;
+  background: var(--glass-overlay);
+  backdrop-filter: blur(var(--blur)) saturate(150%);
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-weight: 600;
+  pointer-events: auto;
+}
+
+@media (max-width: 1180px) {
+  .pr-notices {
+    right: 20px;
+  }
+}
+
+/*
+ * On a phone the bell is not at the bar's right edge (the account sits beside it), so a menu
+ * hung from the bell would run off the left of the screen. It hangs from the bar instead, with
+ * the page's 16px gutter on both sides.
+ */
+@media (max-width: 768px) {
+  .bell {
+    position: static;
+  }
+
+  .bell__menu {
+    top: calc(100% + 4px);
+    right: 16px;
+    left: 16px;
+    width: auto;
+  }
+
+  .pr-notices {
+    right: 16px;
+  }
+}
+
+/* Without motion the notices still fade, since a fade moves nothing; nothing slides or scales. */
+@media (prefers-reduced-motion: reduce) {
+  .bell__count {
+    animation: none;
+  }
+
+  .pr-notice {
+    animation-name: pr-notice-fade;
+    animation-duration: 160ms;
+  }
+
+  .pr-notice.is-leaving {
+    transform: none;
+  }
+}
+
+@keyframes pr-notice-fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .github-identity,
@@ -2659,6 +2935,7 @@ body::before {
   font-weight: 700;
   line-height: 1.35;
   overflow-wrap: anywhere;
+  text-wrap: pretty;
 }
 
 .source-row__time {
@@ -2795,7 +3072,6 @@ body::before {
   background: var(--glass-strong);
   box-shadow: var(--glass-highlight), var(--shadow-lift);
   backdrop-filter: blur(var(--blur)) saturate(150%);
-  -webkit-backdrop-filter: blur(var(--blur)) saturate(150%);
 }
 
 .confirm__title {
@@ -2860,7 +3136,6 @@ body::before {
   background: var(--glass-strong);
   box-shadow: var(--shadow-lift);
   backdrop-filter: blur(var(--blur)) saturate(150%);
-  -webkit-backdrop-filter: blur(var(--blur)) saturate(150%);
 }
 
 .drawer__head {

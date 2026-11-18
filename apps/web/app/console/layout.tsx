@@ -1,5 +1,7 @@
 import { redirect } from "next/navigation";
 import { ConsoleNav } from "@/components/console/ConsoleNav";
+import { NotificationsProvider } from "@/components/console/NotificationsProvider";
+import { PullRequestNotices } from "@/components/console/PullRequestNotices";
 import { currentAccount } from "@/lib/auth/server";
 import { projectDisplayName } from "@/lib/console/project";
 import { ensureProject } from "@/lib/console/provision";
@@ -13,13 +15,16 @@ export default async function ConsoleLayout({ children }: { children: React.Reac
   const project = await ensureProject(account);
 
   return (
-    <div className="app-shell">
-      <ConsoleNav
-        email={account.email}
-        company={projectDisplayName(project)}
-        githubLogin={project.githubLogin}
-      />
-      <main className="console-page">{children}</main>
-    </div>
+    <NotificationsProvider>
+      <div className="app-shell">
+        <ConsoleNav
+          email={account.email}
+          company={projectDisplayName(project)}
+          githubLogin={project.githubLogin}
+        />
+        <main className="console-page">{children}</main>
+        <PullRequestNotices />
+      </div>
+    </NotificationsProvider>
   );
 }

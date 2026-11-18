@@ -25,7 +25,8 @@ describe("toNotifications", () => {
     expect(found.map((item) => item.kind)).toEqual(["pull_request", "issue"]);
     expect(found[0]?.number).toBe(13);
     expect(found[0]?.title).toBe("Add a dark mode toggle");
-    expect(found[0]?.id).toBe("g1:pull_request");
+    expect(found[0]?.id).toBe("g1:pull_request:13");
+    expect(found[1]?.id).toBe("g1:issue:12");
   });
 
   it("carries the weight behind the request", () => {
@@ -54,6 +55,56 @@ describe("toNotifications", () => {
   it("names a request that has no title", () => {
     expect(toNotifications([group({ title: null })])[0]?.title).toBe("Feature request");
     expect(toNotifications([group({ title: "  " })])[0]?.title).toBe("Feature request");
+  });
+
+  it("dates each line by when it was opened, not by the last report", () => {
+    const found = toNotifications([
+      group({
+        pr_url: "https://github.com/acme/app/pull/13",
+        issue_opened_at: "2026-08-20T10:06:00Z",
+        pr_opened_at: "2026-08-20T11:30:00Z",
+      }),
+    ]);
+    expect(found.map((item) => [item.kind, item.at])).toEqual([
+      ["pull_request", "2026-08-20T11:30:00Z"],
+      ["issue", "2026-08-20T10:06:00Z"],
+    ]);
+  });
+
+  it("puts a pull request opened just now above a newer report's issue", () => {
+    const found = toNotifications([
+      group({
+        id: "reported-later",
+        last_seen: "2026-08-22T09:00:00Z",
+        issue_opened_at: "2026-08-22T09:00:05Z",
+      }),
+      group({
+        id: "built-now",
+        last_seen: "2026-08-20T10:05:00Z",
+        issue_opened_at: "2026-08-20T10:05:10Z",
+        pr_url: "https://github.com/acme/app/pull/14",
+        pr_opened_at: "2026-08-22T09:20:00Z",
+      }),
+    ]);
+    expect(found.map((item) => item.id)).toEqual([
+      "built-now:pull_request:14",
+      "reported-later:issue:12",
+      "built-now:issue:12",
+    ]);
+  });
+
+  it("compares instants, not strings, across time zone notations", () => {
+    const found = toNotifications([
+      group({ id: "a", issue_opened_at: "2026-08-20T12:00:00+02:00" }),
+      group({ id: "b", issue_opened_at: "2026-08-20T10:30:00Z" }),
+    ]);
+    expect(found.map((item) => item.groupId)).toEqual(["b", "a"]);
+  });
+
+  it("gives a second pull request for the same request its own id", () => {
+    const first = toNotifications([group({ pr_url: "https://github.com/acme/app/pull/13" })]);
+    const second = toNotifications([group({ pr_url: "https://github.com/acme/app/pull/21" })]);
+    expect(first[0]?.id).not.toBe(second[0]?.id);
   });
 
   it("never hands the bell more than ten things to show", () => {
