@@ -1,5 +1,6 @@
 """End-to-end drafting against the fixture app with the real model API. Skipped without OPENAI_API_KEY."""
 
+import logging
 import os
 import shutil
 import subprocess
@@ -30,7 +31,26 @@ def _request() -> FeatureRequestInput:
     )
 
 
-def test_dark_mode_draft_passes_gates(tmp_path: Path) -> None:
+def _cost_report(reporter: NullReporter, records: list[logging.LogRecord]) -> None:
+    """Which model wrote each file, whether the run escalated, and the tokens each model used."""
+    for kind, event in reporter.events:
+        if kind == "model":
+            print("model row:", event["model"], "|", event["title"])
+        elif kind == "status" and event["title"].startswith("Escalated"):
+            print("escalation:", event["title"])
+    print("escalated:", any(k == "status" and e["title"].startswith("Escalated") for k, e in reporter.events))
+    totals: dict[str, dict[str, int]] = {}
+    for record in records:
+        model_totals = totals.setdefault(getattr(record, "model"), {"calls": 0})
+        model_totals["calls"] += 1
+        for name, value in getattr(record, "usage", {}).items():
+            model_totals[name] = model_totals.get(name, 0) + value
+    for model, counts in totals.items():
+        print("usage:", model, " ".join(f"{name}={value}" for name, value in counts.items()))
+
+
+def test_dark_mode_draft_passes_gates(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO, logger="patchlet.llm")
     root = tmp_path / "repo"
     shutil.copytree(FIXTURE, root)
     subprocess.run(["git", "init", "-q"], cwd=root, check=True)
@@ -52,6 +72,7 @@ def test_dark_mode_draft_passes_gates(tmp_path: Path) -> None:
     finally:
         for kind, event in reporter.events:
             print(kind, event.get("title"), event.get("status", ""), (event.get("result_summary") or "")[:300])
+        _cost_report(reporter, [r for r in caplog.records if r.name == "patchlet.llm"])
     assert draft.files
     assert any(".dark" in content for content in draft.files.values())
     for d in draft.diffs:

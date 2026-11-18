@@ -83,6 +83,16 @@ def _report_gates(reporter: Reporter, results: list[applier.GateResult], label: 
         )
 
 
+def _escalate(reporter: Reporter, failure: applier.GateResult, label: str) -> str:
+    """Record the one switch to the escalation model and return the model every later call uses."""
+    reporter.status(
+        f"Escalated the editor to {llm.ESCALATION_MODEL} after {failure.name} failed ({label}); "
+        "every later repair and candidate in this run uses it",
+        detail={"gate": failure.name, "model": llm.ESCALATION_MODEL},
+    )
+    return llm.ESCALATION_MODEL
+
+
 def draft_with_gates(
     root: Path,
     req: FeatureRequestInput,
@@ -113,6 +123,11 @@ def draft_with_gates(
 
     total_repairs = 0
     last_error = ""
+    # The cheaper editor writes the first draft. The first failed gate shows that draft was not
+    # enough, so from then on every repair and every fresh candidate goes to the strong model, and
+    # a run whose gates pass the first time never calls it.
+    editor = llm.EDITOR_MODEL
+    escalated = False
     for candidate in range(1, MAX_CANDIDATES + 1):
         label = f"candidate {candidate}"
         files: dict[str, str] = {}
@@ -122,11 +137,13 @@ def draft_with_gates(
             for other in written_plan:
                 if other.path not in context and other.path != planned.path and originals.get(other.path):
                     context[other.path] = originals[other.path] or ""
-            content = codegen.draft_file(req, issue_title, issue_body, plan, planned, existing, agents_md, context, dependencies)
+            content = codegen.draft_file(
+                req, issue_title, issue_body, plan, planned, existing, agents_md, context, dependencies, model=editor
+            )
             files[planned.path] = content
             reporter.model(
-                f"Drafted {planned.path} ({label})",
-                llm.EDITOR_MODEL,
+                f"Drafted {planned.path} with {editor} ({label})",
+                editor,
                 "write the complete file contents",
                 input_summary=f"{'new file' if existing is None else f'{len(existing.splitlines())} existing lines supplied verbatim'}; reason: {planned.reason}",
                 output_summary=f"{len(content.splitlines())} lines",
@@ -136,6 +153,9 @@ def draft_with_gates(
         results = applier.run_gates(root, repo_slug, install=False)
         _report_gates(reporter, results, label)
         failure = _first_failure(results)
+        if failure is not None and not escalated:
+            editor = _escalate(reporter, failure, label)
+            escalated = True
 
         repairs = 0
         while failure is not None and repairs < MAX_REPAIRS:
@@ -147,11 +167,11 @@ def draft_with_gates(
                 context = {p: c for p, c in files.items() if p != path}
                 context.update(witnesses)
                 files[path] = codegen.repair_file(
-                    path, files[path], failure.output, agents_md, context, dependencies, own_tests
+                    path, files[path], failure.output, agents_md, context, dependencies, own_tests, model=editor
                 )
                 reporter.model(
-                    f"Repaired {path} after {failure.name} failed (repair {repairs}/{MAX_REPAIRS}, {label})",
-                    llm.EDITOR_MODEL,
+                    f"Repaired {path} with {editor} after {failure.name} failed (repair {repairs}/{MAX_REPAIRS}, {label})",
+                    editor,
                     "fix the file so the gate passes",
                     input_summary=failure.output.strip().splitlines()[-1][:300] if failure.output.strip() else failure.name,
                     output_summary=f"{len(files[path].splitlines())} lines",

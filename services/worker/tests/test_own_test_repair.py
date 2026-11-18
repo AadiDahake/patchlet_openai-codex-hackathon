@@ -70,6 +70,7 @@ def test_the_repair_prompt_carries_the_failing_output_and_says_the_test_is_its_o
         "(no AGENTS.md)",
         {"tests/seat-party.test.ts": FILES["tests/seat-party.test.ts"]},
         own_new_tests=["tests/seat-party.test.ts"],
+        model=llm.ESCALATION_MODEL,
     )
 
     prompt = prompts[0]
@@ -85,6 +86,8 @@ def test_the_repair_prompt_says_nothing_of_the_kind_for_an_ordinary_failure(
     prompts: list[str] = []
     monkeypatch.setattr(llm, "complete", lambda model, system, user: prompts.append(user) or "x\n")
 
-    codegen.repair_file("lib/seats/party.ts", "x\n", "error TS2322", "(no AGENTS.md)", {})
+    codegen.repair_file(
+        "lib/seats/party.ts", "x\n", "error TS2322", "(no AGENTS.md)", {}, model=llm.ESCALATION_MODEL
+    )
 
     assert "did not exist before this change" not in prompts[0]

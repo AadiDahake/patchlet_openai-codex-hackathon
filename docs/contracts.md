@@ -923,14 +923,18 @@ Every call in `apps/web` goes through `apps/web/lib/openai.ts`; every call in th
 through `services/worker/steps/llm.py`. Nothing else names a model id.
 
 Chosen on **2026-08-29** by reading <https://developers.openai.com/api/docs/models> and the guides
-it links.
+it links. The worker rows were chosen again on **2026-11-18** from the same page and
+<https://developers.openai.com/api/docs/pricing>, and each id was called with every request shape
+the worker sends before the change. The web application keeps its `gpt-5.6` models.
 
 | Purpose | Model id | Why this one |
 |---|---|---|
 | Fast understanding and small JSON tasks | `gpt-5.6-luna` | "Optimized for cost-sensitive workloads" and the cheapest of the current family. Understanding, the step plan, the visitor facts and the conversation summary are small extractions over evidence that is already gathered, and the user is waiting on them. |
-| Answers, step plans, issue drafting, code planning | `gpt-5.6-sol` | "Flagship model for complex professional work". Issue text and a change plan both end up in a pull request a human reads, so this is where the strongest model earns its cost. |
+| Answers in `apps/web` | `gpt-5.6-sol` | "Flagship model for complex professional work". The answer is what the visitor reads, so this is where the strongest model earns its cost. |
 | Absence verdict | `gpt-5.6-terra` at effort `high` | "Balances intelligence and cost". The verdict is one judgement over three short summaries: it needs deliberation, not writing. Running the middle model at high effort buys the deliberation without the flagship price. |
-| Code generation | `gpt-5.6-sol` | The worker writes whole files that must pass the target repository's own typecheck and build. No Codex-branded model id is published on the models page, so the flagship general model does this work. |
+| Worker: priority, issue text, issue filing call and change plan (chosen 2026-11-18) | `gpt-6.2-sol` (`ARCHITECT_MODEL`) | "Everyday workhorse for coding and running agents at scale, balancing intelligence and cost", at 2 USD input and 10 USD output for each 1M tokens. These are a few input-heavy calls per run, and the plan decides what every later call writes, so the strong model stays here. |
+| Worker: the first draft of each file (chosen 2026-11-18) | `gpt-6.1-terra` (`EDITOR_MODEL`) at effort `medium` | "Fast, efficient model", at 1 USD input and 5 USD output for each 1M tokens: half the price of `gpt-6.2-sol`. Drafting is most of the worker's tokens, and a run whose gates pass the first time needs nothing stronger. On 2026-11-18 the fixture's dark-mode draft passed typecheck and build on the first attempt with it. |
+| Worker: every repair and every later candidate, after the first failed gate in a run (chosen 2026-11-18) | `gpt-6.2-sol` (`ESCALATION_MODEL`) at effort `medium` | A failed gate shows that the cheap draft was not enough, so the rest of that run goes to the strong model. The switch happens once per run and is a `status` trace row that names the gate. A run whose gates pass the first time never calls this model. |
 | Capability compiler: reverse task synthesis (chosen 2026-08-29) | `gpt-5.6-luna` at effort `low` | Batched, eight sessions per call, over prose the compiler already rendered: a small extraction per session, nine calls per opportunity. On the seeded sessions it named the goal of all 63 family sessions correctly. |
 | Capability compiler: the trajectory reward and the naming call (chosen 2026-08-30) | `gpt-5.6-sol` at effort `medium` | The reward decides how many sessions count as evidence, and on 2026-08-30 the small model graded 33 of 63 completed workflows as unfinished while the flagship graded 63 of 63. The naming call's answer becomes the specification and then a pull request a person reads. The flagship earns its cost on both. |
 | Embeddings, 1536 dimensions | `text-embedding-3-small` | The current small embedding model. Its default width is 1536, which is what every vector column and both match functions are built around. |
@@ -950,6 +954,11 @@ Notes the API enforces:
 - Every model in the `gpt-5.6` family is a reasoning model. Effort is
   `reasoning: {effort: "none" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max"}` and
   defaults to `medium`. `EFFORT` in `@patchlet/shared` records the value each purpose uses.
+- The `gpt-6` models the worker uses take the same `reasoning.effort` values. `gpt-6.2-sol` rejects
+  `none`; the worker never sends it.
+- The worker logs one INFO line per model call on the `patchlet.llm` logger: the model id and the
+  token counts the API reports (input, cached input, output, and reasoning when reported). It never
+  logs a prompt or a key. Those lines are the worker's cost record.
 - `max_output_tokens` counts reasoning tokens as well as text, so every budget is set well above
   the size of the answer itself. A budget sized for the text alone comes back empty.
 - Embeddings take `dimensions`. The provider asks for `EMBED_DIMENSIONS` explicitly and rejects a
