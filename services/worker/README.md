@@ -55,6 +55,68 @@ planned for deletion or rewrite, the strict schema requires at least one file, a
 retried once with the refusal named, and a second empty answer raises with the model's own words in
 the message. Everything else in the conventions still binds.
 
+### Recorded drafts
+
+A live draft takes 6 to 8 minutes, and the result changes from run to run. For a request that an
+operator already saw through once, the worker can use that tested change again. Set
+`PATCHLET_RECORDED_DRAFTS` to the path of a JSON file (a relative path starts from the directory
+the worker runs in). With the variable unset, the worker behaves exactly as before. The worker
+reads the file again for each run, so an edit applies to the next run without a restart.
+
+The file holds a list of entries. Each entry names a repository, a commit in that repository, and
+how to recognise the request that the commit answers:
+
+```json
+{
+  "drafts": [
+    {
+      "name": "NovaAir family seating",
+      "repo": "AadiDahake/novaair",
+      "commit": "58995f2e947c17854174452536068c727faa78c2",
+      "match": { "words": ["seat"], "pattern": "together|adjacent|next to each other|side by side|famil" },
+      "run_gates": true,
+      "summary": "Optional. The \"What changed\" text of the pull request.",
+      "acceptance_criteria": ["Optional. The \"How to test\" list of the pull request."]
+    }
+  ]
+}
+```
+
+| Field | Required | Meaning |
+|---|---|---|
+| `repo` | yes | `owner/name`. The entry applies only to a project bound to this repository (case does not matter). |
+| `commit` | yes | The full 40-character sha. A branch name is refused, because a branch can move. |
+| `match.words` | one of the two | Every word must start a word in the request title or the user's quote, case ignored. `seat` matches "seats" and "seating". |
+| `match.pattern` | one of the two | A Python regular expression, case ignored, searched in the title and the quote. When both are set, both must match. |
+| `run_gates` | no (`true`) | `false` skips `npm ci` and the gates. The gate comment then says that the gates did not run. |
+| `name` | no | The name the trace shows. |
+| `summary` | no | The pull request's "What changed" text. The default is the commit message without its type prefix and its `Closes #N` line. |
+| `acceptance_criteria` | no | The pull request's "How to test" list. The default is the list the issue uses. |
+
+The first entry that matches wins. `docs/recorded-drafts/novaair-family-seating.json` is the entry
+for the NovaAir family seating request. The worker never loads it by default.
+
+When a run claims a request that matches an entry:
+
+- It files the issue in the normal way.
+- It reads the commit through the GitHub API. It uses the recording only when the commit has one
+  parent and that parent is the current head of the default branch. If not, a `status` row names
+  the two commits, and the architect and the editor draft the change in the normal way. The draft
+  step checks the head again after its own clone.
+- It does not call the architect or the editor. It applies every file that the commit added,
+  changed or deleted (a rename is a delete and a create) in the clone, from the commit's blobs.
+- It runs `npm ci` and the gates for real, unless the entry sets `run_gates` to `false`. When a
+  gate fails, the worker puts the clone back, says so in the trace, and the models draft the change.
+- It opens the draft pull request through the same code as a normal draft: the same branch name,
+  title, body, commit message and pause for approval. Everything after approval is unchanged.
+
+The run stays truthful about what it did. No `model` row and no "Drafted <file> with <model>" row
+is written for a recorded file. The trace says "Using recorded draft <sha>", one "Applied <file>
+from recorded draft <sha>" row for each file, and "Changes to N file(s) from recorded draft <sha>"
+on the diff. The gate comment on the pull request starts with one line that names the commit and
+says that no model wrote the files in this run. A file that cannot be read or has the wrong shape
+is ignored: the run says so in a `status` row and drafts in the normal way.
+
 When `SLACK_WEBHOOK_URL` is set, one message goes out when the issue is filed and one when the
 draft pull request opens.
 
@@ -70,6 +132,8 @@ The model ids the worker uses live in `steps/llm.py` and nowhere else:
 | `EDITOR_MODEL` | `gpt-6.1-terra` | the first draft of each file |
 | `ESCALATION_MODEL` | `gpt-6.2-sol` | every repair and every later candidate after the first failed gate |
 
+`PATCHLET_ARCHITECT_MODEL`, `PATCHLET_EDITOR_MODEL` and `PATCHLET_ESCALATION_MODEL` override these
+ids for one host when they are set; the defaults above hold when they are not.
 `docs/contracts.md` section 5 records each choice and why. Every model call logs one INFO line on
 the `patchlet.llm` logger with the model id and the token counts the API reports, for example
 `model call model=gpt-6.1-terra input=1534 cached_input=0 output=363 reasoning=140`. Prompts and
@@ -92,6 +156,7 @@ steps/repo.py      clone, file tree, keyword ranking, bounded reads
 steps/codegen.py   architect and editor prompts and model calls
 steps/applier.py   atomic apply and delete with a path guard, gates, node_modules cache, diffs
 steps/drafting.py  the draft / gate / repair / new-candidate loop
+steps/recorded.py  recorded drafts: the file, the match, and applying a tested commit in place of the models
 steps/deploy.py    Vercel deployment polling by commit sha, with a clean 10 minute timeout
 steps/issue.py     issue and PR body builders
 steps/slack.py     optional webhook
@@ -123,6 +188,10 @@ yourself (see `.env.example`).
 | `TARGET_VERCEL_PROJECT` | no (`novaair`) | Vercel project name whose deployment the worker waits for |
 | `SLACK_WEBHOOK_URL` | no | post a message when an issue and a draft PR exist |
 | `PATCHLET_CACHE_DIR` | no (`~/.cache/patchlet`) | where cached `node_modules` live |
+| `PATCHLET_RECORDED_DRAFTS` | no | path of a recorded drafts file (see "Recorded drafts"); unset means every request is drafted by the models |
+| `PATCHLET_ARCHITECT_MODEL` | no (`gpt-6.2-sol`) | model id for the priority, the issue filing call and the change plan |
+| `PATCHLET_EDITOR_MODEL` | no (`gpt-6.1-terra`) | model id for the first draft of each file |
+| `PATCHLET_ESCALATION_MODEL` | no (`gpt-6.2-sol`) | model id for every repair and later candidate after the first failed gate |
 
 ### Starting a run by hand
 

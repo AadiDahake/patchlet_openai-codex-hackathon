@@ -82,11 +82,31 @@ class PlannedFile(BaseModel):
         return self.action == "delete"
 
 
+class Recording(BaseModel):
+    """A change Patchlet drafted before and a person tested, used again in place of the models.
+
+    `commit` is in `repo`, and `parent` is the one commit it was made on top of. The run uses the
+    recording only while that parent is the head of the default branch.
+    """
+
+    name: str
+    repo: str
+    commit: str
+    parent: str
+    run_gates: bool = True
+
+    @property
+    def short(self) -> str:
+        return self.commit[:7]
+
+
 class Plan(BaseModel):
     files: list[PlannedFile]
     acceptance_criteria: list[str] = Field(default_factory=list)
     summary: str = ""
     base_sha: str = ""
+    # Set when the files come from a recorded draft, not from the architect and the editor.
+    recording: Recording | None = None
 
 
 class FileDiff(BaseModel):
@@ -107,10 +127,15 @@ class Draft(BaseModel):
     deletions: list[str] = Field(default_factory=list)
     diffs: list[FileDiff] = Field(default_factory=list)
     summary: str = ""
+    # The criteria of the plan this draft was built against, which can differ from the plan the
+    # run started with when a recorded draft fell back to the architect.
+    acceptance_criteria: list[str] = Field(default_factory=list)
     base_sha: str = ""
     candidates_tried: int = 1
     repairs: int = 0
     gates: list[GateOutcome] = Field(default_factory=list)
+    # Set when no model wrote these files in this run. The trace and the gate comment say so.
+    recording: Recording | None = None
 
 
 class PrRef(BaseModel):

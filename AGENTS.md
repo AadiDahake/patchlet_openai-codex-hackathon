@@ -239,6 +239,14 @@ connection or a "not now" status is retried a few times, and an answer about the
 is open, writes the failure into the trace in words a person can act on, leaves the issue open and
 puts the group back in a state a later report can start from.
 
+## A recorded draft says it is one
+
+`PATCHLET_RECORDED_DRAFTS` lets the worker apply a tested commit in place of the architect and the
+editor for a request it matches (`services/worker/steps/recorded.py`, "Recorded drafts" in
+`services/worker/README.md`). It applies only on top of the commit's own parent, and the gates
+still run unless the entry says otherwise. Nothing may claim a model wrote a recorded file: no
+`model` row, and the trace and the gate comment name the commit.
+
 ## A route is only ever planned to a control that does the thing
 
 `coversCapability` in `@patchlet/shared` is the one rule behind every "is this the control for it"

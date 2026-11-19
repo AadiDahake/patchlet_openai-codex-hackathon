@@ -162,6 +162,36 @@ class GitHubClient:
         commit = self._request("GET", self._repo_path(f"/git/commits/{commit_sha}"))
         return commit["tree"]["sha"]
 
+    def get_commit(self, sha: str) -> dict[str, Any]:
+        """One commit with its parents and every file it changed.
+
+        The endpoint pages the file list at most 100 files to a page, so a larger commit is read
+        page by page until a short page ends it.
+        """
+        per_page = 100
+        commit = self._request("GET", self._repo_path(f"/commits/{sha}"), params={"per_page": per_page, "page": 1})
+        files: list[dict[str, Any]] = list(commit.get("files") or [])
+        page = 1
+        batch = files
+        while len(batch) == per_page:
+            page += 1
+            more = self._request("GET", self._repo_path(f"/commits/{sha}"), params={"per_page": per_page, "page": page})
+            batch = list(more.get("files") or [])
+            files.extend(batch)
+        commit["files"] = files
+        return commit
+
+    def get_blob_text(self, sha: str) -> str:
+        """A blob's contents as UTF-8 text. A binary blob raises, because the worker writes text only."""
+        blob = self._request("GET", self._repo_path(f"/git/blobs/{sha}"))
+        if blob.get("encoding") != "base64":
+            return str(blob.get("content") or "")
+        raw = base64.b64decode(blob.get("content") or "")
+        try:
+            return raw.decode("utf-8")
+        except UnicodeDecodeError as error:
+            raise GitHubError(f"blob {sha[:7]} is not UTF-8 text") from error
+
     def branch_exists(self, branch: str) -> bool:
         try:
             self.get_branch_sha(branch)

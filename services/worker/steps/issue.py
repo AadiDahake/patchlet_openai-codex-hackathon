@@ -177,10 +177,31 @@ def build_pr_body(
     return "\n".join(lines) + "\n"
 
 
-def build_gate_comment(gates: list[tuple[str, bool, float]], activity_url: str) -> str:
-    """The comment left on the draft PR: what the gates did, and where to watch the rest."""
-    lines = ["Patchlet ran the repository's own gates against this branch before opening it.", "", "| Gate | Result | Duration |", "| --- | --- | --- |"]
-    for name, ok, seconds in gates:
-        lines.append(f"| `{name}` | {'passed' if ok else 'failed'} | {seconds:.0f}s |")
+def recorded_line(commit: str) -> str:
+    """The one line that tells a reviewer no model wrote this branch in this run."""
+    return (
+        f"The files on this branch come from recorded draft `{commit[:7]}`, a change Patchlet drafted "
+        "and a person tested before. No model wrote them in this run."
+    )
+
+
+def build_gate_comment(
+    gates: list[tuple[str, bool, float]],
+    activity_url: str,
+    recorded_commit: str = "",
+) -> str:
+    """The comment left on the draft PR: what the gates did, and where to watch the rest.
+
+    A branch built from a recorded draft says so first, and says plainly when the gates did not run.
+    """
+    lines: list[str] = []
+    if recorded_commit:
+        lines += [recorded_line(recorded_commit), ""]
+    if gates:
+        lines += ["Patchlet ran the repository's own gates against this branch before opening it.", "", "| Gate | Result | Duration |", "| --- | --- | --- |"]
+        for name, ok, seconds in gates:
+            lines.append(f"| `{name}` | {'passed' if ok else 'failed'} | {seconds:.0f}s |")
+    else:
+        lines.append("Patchlet did not run the repository's gates against this branch.")
     lines += ["", f"Follow the rest of this change on the [Patchlet activity page]({activity_url})."]
     return "\n".join(lines) + "\n"

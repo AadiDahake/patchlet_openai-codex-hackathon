@@ -15,6 +15,12 @@ The presenter script lives here. It is being written next.
 - Reset the demo beforehand: Reset demo in the console's account menu, or `npm run demo:reset`.
   Either one puts NovaAir back to its pre-demo state (see "Resetting the demo" below) and clears
   the old escalations. Wait for the site to redeploy, about a minute, before you start.
+- For the family seating request, the worker can use the tested change in place of a live draft,
+  so the issue and the pull request appear in seconds and the change is the one that was tested.
+  Copy `docs/recorded-drafts/novaair-family-seating.json` to a path outside the repository and
+  start the worker with `PATCHLET_RECORDED_DRAFTS` set to that path ("Recorded drafts" in
+  `services/worker/README.md`). The recording applies only while `main` is at `demo-baseline`, so
+  reset first; otherwise the trace says why and the models draft the change.
 - Window at 1440x900 or larger. Everything is sized to read on a projector, but the widget panel is
   380 px wide, so do not shrink the window.
 

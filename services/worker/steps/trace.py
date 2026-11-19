@@ -29,11 +29,17 @@ def pr(project_id: str, escalation_id: str, url: str, number: int, branch: str) 
     )
 
 
-def diff(project_id: str, escalation_id: str, files: list[dict[str, str]]) -> int | None:
-    return db.emit_trace(
-        project_id, escalation_id, "artifact", f"Drafted changes to {len(files)} file(s)",
-        detail={"artifact": "diff", "files": files},
+def diff(project_id: str, escalation_id: str, files: list[dict[str, str]], recorded_commit: str = "") -> int | None:
+    """The change as patches. A change no model wrote in this run names the recorded draft instead."""
+    title = (
+        f"Changes to {len(files)} file(s) from recorded draft {recorded_commit[:7]}"
+        if recorded_commit
+        else f"Drafted changes to {len(files)} file(s)"
     )
+    detail: dict[str, Any] = {"artifact": "diff", "files": files}
+    if recorded_commit:
+        detail["recordedCommit"] = recorded_commit
+    return db.emit_trace(project_id, escalation_id, "artifact", title, detail=detail)
 
 
 def deployment(project_id: str, escalation_id: str, url: str) -> int | None:
