@@ -70,7 +70,7 @@ def _first_failure(results: list[applier.GateResult]) -> applier.GateResult | No
     return None
 
 
-def _report_gates(reporter: Reporter, results: list[applier.GateResult], label: str) -> None:
+def report_gates(reporter: Reporter, results: list[applier.GateResult], label: str) -> None:
     for result in results:
         summary = result.output.strip().splitlines()
         reporter.tool(
@@ -117,7 +117,7 @@ def draft_with_gates(
             )
 
     install = applier.ensure_node_modules(root, repo_slug)
-    _report_gates(reporter, [install], "dependencies")
+    report_gates(reporter, [install], "dependencies")
     if not install.ok:
         raise RuntimeError("npm ci failed:\n" + install.output[-2000:])
 
@@ -151,7 +151,7 @@ def draft_with_gates(
 
         applier.apply_files(root, files, deletions)
         results = applier.run_gates(root, repo_slug, install=False)
-        _report_gates(reporter, results, label)
+        report_gates(reporter, results, label)
         failure = _first_failure(results)
         if failure is not None and not escalated:
             editor = _escalate(reporter, failure, label)
@@ -178,7 +178,7 @@ def draft_with_gates(
                 )
             applier.apply_files(root, files, deletions)
             results = applier.run_gates(root, repo_slug, install=False)
-            _report_gates(reporter, results, f"{label}, repair {repairs}")
+            report_gates(reporter, results, f"{label}, repair {repairs}")
             failure = _first_failure(results)
 
         if failure is None:

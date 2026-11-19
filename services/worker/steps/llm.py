@@ -1,6 +1,8 @@
 """The one place the worker talks to a model provider.
 
-Model ids live here and nowhere else, so a model change is one edit. The calls go through the
+Model ids live here and nowhere else, so a model change is one edit. An operator can override
+each role's id for one host with `PATCHLET_ARCHITECT_MODEL`, `PATCHLET_EDITOR_MODEL` and
+`PATCHLET_ESCALATION_MODEL`; the defaults below hold when those are unset. The calls go through the
 Responses API, which is what the OpenAI documentation presents as the primary API for structured
 output and for tool calls. See `docs/contracts.md` section 5 for each choice and its reason.
 """
@@ -15,15 +17,25 @@ from openai import OpenAI
 
 import config
 
+
+def _model(variable: str, default: str) -> str:
+    """The id an operator set in the environment for this role, or the default chosen below.
+
+    The override exists so an operator can change a model for one host without a code change. The
+    defaults are the recorded choices in `docs/contracts.md` section 5.
+    """
+    return config.optional(variable, default)
+
+
 # Priority judgements, issue text, the change plan and the issue filing call: the strong model,
 # because the writing and the file choice both stand on their own in a pull request a human reads,
 # and the plan decides what every later call writes. These are a few input-heavy calls per run.
-ARCHITECT_MODEL = "gpt-6.2-sol"
+ARCHITECT_MODEL = _model("PATCHLET_ARCHITECT_MODEL", "gpt-6.2-sol")
 # The first draft of every file. Most runs pass their gates on this draft, so the cheaper model
 # writes it and the strong model is paid for only when a gate says the draft is wrong.
-EDITOR_MODEL = "gpt-6.1-terra"
+EDITOR_MODEL = _model("PATCHLET_EDITOR_MODEL", "gpt-6.1-terra")
 # Every editor call after the first gate failure in a run: each repair and each fresh candidate.
-ESCALATION_MODEL = "gpt-6.2-sol"
+ESCALATION_MODEL = _model("PATCHLET_ESCALATION_MODEL", "gpt-6.2-sol")
 
 log = logging.getLogger("patchlet.llm")
 

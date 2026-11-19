@@ -12,7 +12,7 @@ from pathlib import Path
 
 import config
 from models import Approval, Draft, FeatureRequestInput, IssueRef, Outcome, Plan, PrRef
-from steps import codegen, db, deploy, drafting, issue as issue_text, llm, mcp_github, repo, slack, trace
+from steps import codegen, db, deploy, drafting, issue as issue_text, llm, mcp_github, recorded, repo, slack, trace
 from steps.github import GitHubClient
 from steps.github_token import project_token
 from steps.reporter import Reporter
@@ -291,18 +291,24 @@ def inspect_repository(req: FeatureRequestInput, issue: IssueRef) -> Plan:
             f"Cloned {req.repo_full_name}@{req.default_branch}", "git clone", "git",
             f"--depth 1 --branch {req.default_branch}", f"HEAD {sha[:7]}",
         )
-        plan, input_summary = codegen.plan_changes(workdir, req, issue.title, issue.body)
-        reporter.model(
-            f"Chose {len(plan.files)} file(s) to change",
-            llm.ARCHITECT_MODEL,
-            "choose the smallest set of files and write acceptance criteria",
-            input_summary=input_summary,
-            output_summary=plan.summary,
-            files=[{"path": f.path, "reason": f.reason, "action": f.action} for f in plan.files],
-        )
-        return plan
+        # A request an operator recorded a tested change for skips the architect and the editor.
+        plan = recorded.plan_for(req, sha, reporter)
+        return plan if plan is not None else _plan_with_architect(workdir, req, issue, reporter)
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
+
+
+def _plan_with_architect(workdir: Path, req: FeatureRequestInput, issue: IssueRef, reporter: Reporter) -> Plan:
+    plan, input_summary = codegen.plan_changes(workdir, req, issue.title, issue.body)
+    reporter.model(
+        f"Chose {len(plan.files)} file(s) to change",
+        llm.ARCHITECT_MODEL,
+        "choose the smallest set of files and write acceptance criteria",
+        input_summary=input_summary,
+        output_summary=plan.summary,
+        files=[{"path": f.path, "reason": f.reason, "action": f.action} for f in plan.files],
+    )
+    return plan
 
 
 # ---- 3. draft_implementation --------------------------------------------------
@@ -313,8 +319,18 @@ def draft_implementation(req: FeatureRequestInput, issue: IssueRef, plan: Plan) 
     workdir = Path(tempfile.mkdtemp(prefix="patchlet-draft-"))
     try:
         repo.clone(req.repo_full_name, req.default_branch, workdir, token=project_token(req.project_id))
-        draft = drafting.draft_with_gates(workdir, req, issue.title, issue.body, plan, reporter, repo.repo_slug(req.repo_full_name))
-        reporter.diff([{"path": d.path, "patch": d.patch} for d in draft.diffs])
+        slug = repo.repo_slug(req.repo_full_name)
+        draft = recorded.apply(workdir, req, plan, reporter, slug) if plan.recording else None
+        if draft is None:
+            if plan.recording:
+                # The recording could not stand, and the trace already says why. Plan as usual.
+                plan = _plan_with_architect(workdir, req, issue, reporter)
+            draft = drafting.draft_with_gates(workdir, req, issue.title, issue.body, plan, reporter, slug)
+        draft = draft.model_copy(update={"acceptance_criteria": plan.acceptance_criteria})
+        reporter.diff(
+            [{"path": d.path, "patch": d.patch} for d in draft.diffs],
+            draft.recording.commit if draft.recording else "",
+        )
         return draft
     finally:
         shutil.rmtree(workdir, ignore_errors=True)
@@ -338,7 +354,8 @@ def open_draft_pr(req: FeatureRequestInput, issue: IssueRef, plan: Plan, draft: 
     )
 
     body = issue_text.build_pr_body(
-        req, issue.number, list(draft.files), plan.acceptance_criteria, draft.summary, draft.deletions
+        req, issue.number, list(draft.files), draft.acceptance_criteria or plan.acceptance_criteria,
+        draft.summary, draft.deletions,
     )
     pr_title = f"feat: {title}"
     existing = github.find_open_pr_for_branch(branch)
@@ -358,16 +375,22 @@ def open_draft_pr(req: FeatureRequestInput, issue: IssueRef, plan: Plan, draft: 
     db.update_escalation(req.escalation_id, pr_url=ref.url, pr_number=ref.number, branch=branch)
     _set_group(req, pr_url=ref.url, status="pr_open")
 
-    # The gates already passed on this branch, so say so on the pull request itself.
-    if draft.gates:
+    # The gates already passed on this branch, so say so on the pull request itself. A branch built
+    # from a recorded draft always gets the comment, because it is where the reviewer learns that.
+    recorded_commit = draft.recording.commit if draft.recording else ""
+    if draft.gates or recorded_commit:
         gate_comment = issue_text.build_gate_comment(
-            [(gate.name, gate.ok, gate.duration_s) for gate in draft.gates], config.activity_url()
+            [(gate.name, gate.ok, gate.duration_s) for gate in draft.gates], config.activity_url(), recorded_commit
         )
         github.comment(ref.number, gate_comment)
+        results = ", ".join(
+            f"{gate.name} {'passed' if gate.ok else 'failed'} in {gate.duration_s:.0f}s" for gate in draft.gates
+        ) or "gates not run"
+        source = f"recorded draft {recorded_commit[:7]}; " if recorded_commit else ""
         reporter.tool(
             f"Reported the gate results on PR #{ref.number}", "add_issue_comment", "rest",
             f"POST /repos/{req.repo_full_name}/issues/{ref.number}/comments",
-            ", ".join(f"{gate.name} {'passed' if gate.ok else 'failed'} in {gate.duration_s:.0f}s" for gate in draft.gates),
+            source + results,
         )
 
     slack.notify(f"Patchlet drafted {ref.url} for \"{req.title}\" and it is waiting for approval in the console.")

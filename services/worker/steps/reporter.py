@@ -21,8 +21,8 @@ class Reporter:
     def status(self, title: str, state: str = "ok", detail: Any = None) -> None:
         trace.status(self.project_id, self.escalation_id, title, state, detail)
 
-    def diff(self, files: list[dict[str, str]]) -> None:
-        trace.diff(self.project_id, self.escalation_id, files)
+    def diff(self, files: list[dict[str, str]], recorded_commit: str = "") -> None:
+        trace.diff(self.project_id, self.escalation_id, files, recorded_commit)
 
 
 class NullReporter(Reporter):
@@ -41,5 +41,5 @@ class NullReporter(Reporter):
     def status(self, title: str, state: str = "ok", detail: Any = None) -> None:
         self.events.append(("status", {"title": title, "status": state, "detail": detail}))
 
-    def diff(self, files: list[dict[str, str]]) -> None:
-        self.events.append(("diff", {"files": files}))
+    def diff(self, files: list[dict[str, str]], recorded_commit: str = "") -> None:
+        self.events.append(("diff", {"files": files, "recorded_commit": recorded_commit}))

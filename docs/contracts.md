@@ -923,6 +923,15 @@ what it may answer:
   usually the test stating what the code has to satisfy, and a stack trace alone does not carry the
   signature it is being called with. Only a planned file is ever rewritten, so a contract is never
   edited into agreement.
+- **A recorded draft replaces the architect and the editor for one request.** When
+  `PATCHLET_RECORDED_DRAFTS` names a file and an entry for the bound repository matches the request
+  title or the user's quote, the worker applies the files of that entry's commit (read through the
+  GitHub API) in place of the plan and the drafts. It does so only when the commit's one parent is
+  the head of the default branch; otherwise, and when a gate fails, it says why in a `status` row
+  and drafts normally. The gates run unless the entry sets `run_gates` to `false`. The branch, the
+  body and the pause are the normal ones. No `model` row is written for a recorded file, the diff
+  row and the gate comment name the commit, and the comment says that no model wrote the files in
+  this run. The file format is in `services/worker/README.md`.
 - **The pull request body** names the request, the user's quote, the count line
   (`Requested N times, M by users`), every changed file and every deleted one.
 - **The trace ends on the pull request and the pause.** `open_draft_pr` writes the gate comment and
@@ -940,6 +949,8 @@ what it may answer:
 Exported as `MODELS` from `@patchlet/shared`, with the reasoning efforts in `EFFORT` beside them.
 Every call in `apps/web` goes through `apps/web/lib/openai.ts`; every call in the worker goes
 through `services/worker/steps/llm.py`. Nothing else names a model id.
+`PATCHLET_ARCHITECT_MODEL`, `PATCHLET_EDITOR_MODEL` and `PATCHLET_ESCALATION_MODEL` override the
+three worker ids for one host when they are set. The table records the defaults.
 
 Chosen on **2026-08-29** by reading <https://developers.openai.com/api/docs/models> and the guides
 it links. The worker rows were chosen again on **2026-11-18** from the same page and

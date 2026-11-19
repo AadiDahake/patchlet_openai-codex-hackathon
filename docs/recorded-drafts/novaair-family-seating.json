@@ -1,0 +1,27 @@
+{
+  "drafts": [
+    {
+      "name": "NovaAir family seating",
+      "repo": "AadiDahake/novaair",
+      "commit": "58995f2e947c17854174452536068c727faa78c2",
+      "match": {
+        "words": ["seat"],
+        "pattern": "together|adjacent|next to each other|side by side|famil"
+      },
+      "run_gates": true,
+      "summary": "Add a seat-party composition that finds ranked blocks of three, applies all assignments atomically, exposes it through a flight-scoped API, and adds a family-seat chooser to the existing seat map. Update the API and help copy that currently describe seat changes as single-passenger only.",
+      "acceptance_criteria": [
+        "On the seat selection page for the three-person demo booking, a user can request seats together and see available three-seat blocks.",
+        "Every offered block is consecutive in one row and on one side of the aisle, excludes unavailable seats, and satisfies the passengers' child and exit-row restrictions.",
+        "Search results show total extra cost and are ordered from lowest to highest cost; the seeded free option 21A, 21B and 21C appears first.",
+        "Selecting an offered block stages one seat for each of the three passengers and shows the choices in the existing seat map and transaction details.",
+        "Confirming a party option assigns all three passengers through the party API; if any assignment cannot be completed, every passenger keeps their previous seat.",
+        "Manual single-passenger seat selection continues to work.",
+        "The API documentation and help center describe the three-seats-together capability and no longer claim that families can only be moved one passenger at a time.",
+        "The existing seat-party contract tests run against the exported capability and pass.",
+        "npm run typecheck passes.",
+        "npm run build passes."
+      ]
+    }
+  ]
+}
